@@ -14,7 +14,7 @@ from pathlib import Path
 import pandas as pd
 from sqlalchemy import Connection, text
 
-from rflens.db import get_engine
+from rflens.db import analyze, get_engine
 
 UCI_ID = 179
 SOURCE_NAME = "uci_secom"
@@ -117,9 +117,7 @@ def load(conn: Connection, original: pd.DataFrame, metadata: dict) -> int:
         with cur.copy("COPY secom_runs (run_id, label, run_ts) FROM STDIN") as copy:
             for run_id, label, ts in runs.itertuples(index=False):
                 copy.write_row((run_id, label, ts.to_pydatetime()))
-        with cur.copy(
-            "COPY secom_measurements (run_id, feature_idx, value) FROM STDIN"
-        ) as copy:
+        with cur.copy("COPY secom_measurements (run_id, feature_idx, value) FROM STDIN") as copy:
             values = sensors.to_numpy(dtype="float64")
             for run_id, row in zip(runs["run_id"], values, strict=True):
                 for idx, value in zip(feature_idx, row, strict=True):
@@ -160,6 +158,7 @@ def main() -> None:
             text("SELECT count(*) FROM secom_runs WHERE label = 'fail'")
         ).scalar_one()
         measurements = conn.execute(text("SELECT count(*) FROM secom_measurements")).scalar_one()
+    analyze(["secom_runs", "secom_measurements", "data_sources"])  # after commit
     elapsed = time.perf_counter() - start
     print(f"runs={runs} fails={fails} measurements={measurements} elapsed={elapsed:.1f}s")
 

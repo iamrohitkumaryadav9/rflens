@@ -22,7 +22,7 @@ from pathlib import Path
 
 from sqlalchemy import Connection, text
 
-from rflens.db import get_engine
+from rflens.db import analyze, get_engine
 
 BASE_URL = "https://data.fcc.gov/download/pub/uls/complete"
 RAW_ROOT = Path(__file__).resolve().parents[3] / "data" / "raw" / "uls"
@@ -352,6 +352,7 @@ def main() -> None:
             ).scalar_one()
             for rt in LOAD_ORDER
         }
+    analyze([*counts, "uls_file_counts"])  # after commit
     elapsed = time.perf_counter() - start
     for warning in warnings:
         print(f"WARNING {warning}")

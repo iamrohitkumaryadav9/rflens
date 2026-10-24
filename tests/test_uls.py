@@ -165,9 +165,7 @@ def test_row_counts_match_fixture(conn: Connection, fixture_zip: Path) -> None:
     )
     assert file_counts == FIXTURE_COUNTS
     provenance = conn.execute(
-        text(
-            "SELECT DISTINCT sha256, snapshot_date FROM uls_file_counts WHERE service = 'fx1'"
-        )
+        text("SELECT DISTINCT sha256, snapshot_date FROM uls_file_counts WHERE service = 'fx1'")
     ).all()
     assert [(r.sha256, r.snapshot_date.isoformat()) for r in provenance] == [
         (hashlib.sha256(fixture_zip.read_bytes()).hexdigest(), "2026-10-18")
@@ -203,13 +201,17 @@ def test_non_ascii_entity_name(conn: Connection, fixture_zip: Path) -> None:
 
 def test_duplicate_fr_key_group_both_loaded(conn: Connection, fixture_zip: Path) -> None:
     load(conn, fixture_zip, "fx1")
-    erp = conn.execute(
-        text(
-            "SELECT power_erp FROM uls_fr WHERE service = 'fx1' AND usi = 13401 "
-            "AND location_number = 5 AND antenna_number = 1 AND freq_seq_id = 1 "
-            "ORDER BY line_no"
+    erp = (
+        conn.execute(
+            text(
+                "SELECT power_erp FROM uls_fr WHERE service = 'fx1' AND usi = 13401 "
+                "AND location_number = 5 AND antenna_number = 1 AND freq_seq_id = 1 "
+                "ORDER BY line_no"
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert erp == [Decimal("140.820"), Decimal("276.000")]
 
 
@@ -269,9 +271,7 @@ def test_incomplete_latitude_is_null(conn: Connection, fixture_zip: Path) -> Non
     assert row.longitude == pytest.approx(-(87 + 57 / 60 + 19 / 3600), abs=1e-6)
 
 
-def test_out_of_range_coordinate_is_null_with_warning(
-    conn: Connection, fixture_zip: Path
-) -> None:
+def test_out_of_range_coordinate_is_null_with_warning(conn: Connection, fixture_zip: Path) -> None:
     warnings: list[str] = []
     load(conn, fixture_zip, "fx1", warnings)
     row = conn.execute(

@@ -55,11 +55,26 @@ def synthetic_rows(soft: int = 3000, hard: int = 6000, table_hard: int | None = 
 def row(chunk_id: str, body: str, clause: str = "6.9", kind: str = "text") -> dict:
     """A minimal chunk row in the JSONL shape."""
     return {
-        "chunk_id": chunk_id, "spec": SPEC, "version": "19.0.0", "release": 19, "clause": clause,
-        "clause_title": "Title", "parent_path": [], "parent_titles": [], "kind": kind,
-        "position": 0, "table_caption": None, "table_number": None, "table_part": None,
-        "source_file": "x.md", "text": body, "raw_text": body, "media": [],
-        "image_placeholders": 0, "forced_split": False, "char_count": len(body),
+        "chunk_id": chunk_id,
+        "spec": SPEC,
+        "version": "19.0.0",
+        "release": 19,
+        "clause": clause,
+        "clause_title": "Title",
+        "parent_path": [],
+        "parent_titles": [],
+        "kind": kind,
+        "position": 0,
+        "table_caption": None,
+        "table_number": None,
+        "table_part": None,
+        "source_file": "x.md",
+        "text": body,
+        "raw_text": body,
+        "media": [],
+        "image_placeholders": 0,
+        "forced_split": False,
+        "char_count": len(body),
     }
 
 
@@ -83,8 +98,11 @@ def vec() -> list[float]:
 
 def mock_embedder(handler, **kwargs) -> OllamaEmbedder:
     return OllamaEmbedder(
-        "http://ollama.test", "nomic-embed-text:latest", transport=httpx.MockTransport(handler),
-        sleep=kwargs.pop("sleep", lambda s: None), **kwargs,
+        "http://ollama.test",
+        "nomic-embed-text:latest",
+        transport=httpx.MockTransport(handler),
+        sleep=kwargs.pop("sleep", lambda s: None),
+        **kwargs,
     )
 
 
@@ -222,10 +240,14 @@ def test_load_and_embed_then_second_run_skips_everything(conn: Connection) -> No
     assert first.embedded == len(ids) and first.skipped == 0
     second = embed_pending(conn, emb, ids, batch_size=4, progress=lambda s: None)
     assert second.embedded == 0 and second.skipped == len(ids)
-    dims = conn.execute(
-        text("SELECT DISTINCT vector_dims(embedding) FROM chunks WHERE chunk_id = ANY(:ids)"),
-        {"ids": ids},
-    ).scalars().all()
+    dims = (
+        conn.execute(
+            text("SELECT DISTINCT vector_dims(embedding) FROM chunks WHERE chunk_id = ANY(:ids)"),
+            {"ids": ids},
+        )
+        .scalars()
+        .all()
+    )
     assert dims == [EMBED_DIM]
 
 
@@ -235,9 +257,14 @@ def test_a_different_model_counts_as_not_embedded(conn: Connection) -> None:
     other = HashEmbedder(model_id="another-model@123")
     stats = embed_pending(conn, other, ids, progress=lambda s: None)
     assert stats.embedded == len(ids) and stats.skipped == 0
-    models = conn.execute(
-        text("SELECT DISTINCT embedding_model FROM chunks WHERE chunk_id = ANY(:ids)"), {"ids": ids}
-    ).scalars().all()
+    models = (
+        conn.execute(
+            text("SELECT DISTINCT embedding_model FROM chunks WHERE chunk_id = ANY(:ids)"),
+            {"ids": ids},
+        )
+        .scalars()
+        .all()
+    )
     assert models == ["another-model@123"]
 
 
@@ -294,7 +321,11 @@ def test_context_error_names_the_chunk_and_keeps_earlier_batches(conn: Connectio
     commits = []
     with pytest.raises(EmbedError, match="exceeds the embedding model's context") as err:
         embed_pending(
-            conn, TooLong(), ids, batch_size=2, commit=lambda: commits.append(1),
+            conn,
+            TooLong(),
+            ids,
+            batch_size=2,
+            commit=lambda: commits.append(1),
             progress=lambda s: None,
         )
     assert ids[2] in str(err.value)  # the third chunk is the first of the failing batch
@@ -483,9 +514,18 @@ def test_smoke_eval_file_is_reviewed_and_well_formed() -> None:
 def test_smoke_eval_hit_rule_is_exact_clause_not_prefix() -> None:
     q = Question("a", SPEC, "x", ("6.2.3",), ())
     hit = Hit(
-        chunk_id="c", score=1.0, spec=SPEC, version="19.0.0", clause="6.2.3.5",
-        clause_title=None, kind="text",
-        table_number=None, caption=None, table_part=None, text="", related_chunks=[],
+        chunk_id="c",
+        score=1.0,
+        spec=SPEC,
+        version="19.0.0",
+        clause="6.2.3.5",
+        clause_title=None,
+        kind="text",
+        table_number=None,
+        caption=None,
+        table_part=None,
+        text="",
+        related_chunks=[],
     )
     assert not is_hit(q, hit)  # a sub-clause does not count for its parent clause
     assert is_hit(Question("a", SPEC, "x", ("6.2.3.5",), ()), hit)

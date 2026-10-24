@@ -71,8 +71,10 @@ def vector_search(
             """
         ),
         {
-            "q": vector_literal(embedder.embed_query(query)), "model": embedder.model_id,
-            "k": k, "spec": spec,
+            "q": vector_literal(embedder.embed_query(query)),
+            "model": embedder.model_id,
+            "k": k,
+            "spec": spec,
         },
     ).all()
     return [(r.chunk_id, float(r.score)) for r in rows]
@@ -150,13 +152,20 @@ def search(
     }
     return [
         Hit(
-            chunk_id=cid, score=score, spec=rows[cid].spec, version=rows[cid].version,
+            chunk_id=cid,
+            score=score,
+            spec=rows[cid].spec,
+            version=rows[cid].version,
             clause=rows[cid].clause,
-            clause_title=rows[cid].clause_title, kind=rows[cid].kind,
-            table_number=rows[cid].table_number, caption=rows[cid].caption,
-            table_part=rows[cid].table_part, text=rows[cid].text,
+            clause_title=rows[cid].clause_title,
+            kind=rows[cid].kind,
+            table_number=rows[cid].table_number,
+            caption=rows[cid].caption,
+            table_part=rows[cid].table_part,
+            text=rows[cid].text,
             related_chunks=list(rows[cid].metadata.get("related_chunks", [])),
-            vector_rank=vec_rank.get(cid), keyword_rank=kw_rank.get(cid),
+            vector_rank=vec_rank.get(cid),
+            keyword_rank=kw_rank.get(cid),
         )
         for cid, score in top
     ]

@@ -310,9 +310,7 @@ def parse_blocks(file: str, text: str) -> list[Block]:
                 j += 1
                 if depth <= 0:
                     break
-            blocks.append(
-                Block("table", file, table=parse_html_table("\n".join(chunk), file))
-            )
+            blocks.append(Block("table", file, table=parse_html_table("\n".join(chunk), file)))
             i = j
         elif line.startswith("|"):
             flush()
@@ -629,17 +627,39 @@ class SpecChunker:
             self.stats.excluded["empty_body"] += 1
 
     def _make(
-        self, ctx: Clause, seq: int, kind: str, text: str, raw: str, media: list[str], file: str,
-        caption: str | None = None, number: str | None = None, part: str | None = None,
+        self,
+        ctx: Clause,
+        seq: int,
+        kind: str,
+        text: str,
+        raw: str,
+        media: list[str],
+        file: str,
+        caption: str | None = None,
+        number: str | None = None,
+        part: str | None = None,
         forced: bool = False,
     ) -> Chunk:
         chunk = Chunk(
             chunk_id=self._chunk_id(ctx, seq),
-            spec=self.spec, version=self.version, release=self.release, clause=ctx.number,
-            clause_title=ctx.title, parent_path=ctx.parent_path,
-            parent_titles=ctx.parent_titles, kind=kind, position=seq, table_caption=caption,
-            table_number=number, table_part=part, source_file=file, text=text, raw_text=raw,
-            media=media, image_placeholders=text.count(PLACEHOLDER), forced_split=forced,
+            spec=self.spec,
+            version=self.version,
+            release=self.release,
+            clause=ctx.number,
+            clause_title=ctx.title,
+            parent_path=ctx.parent_path,
+            parent_titles=ctx.parent_titles,
+            kind=kind,
+            position=seq,
+            table_caption=caption,
+            table_number=number,
+            table_part=part,
+            source_file=file,
+            text=text,
+            raw_text=raw,
+            media=media,
+            image_placeholders=text.count(PLACEHOLDER),
+            forced_split=forced,
             char_count=len(text),
         )
         self.stats.text_chunks += kind == "text"
@@ -673,8 +693,15 @@ class SpecChunker:
         return pieces
 
     def _emit_text(
-        self, ctx: Clause, prefix: str, paras: list[tuple[str, str]], seq: int, *,
-        kind: str = "text", caption: str | None = None, number: str | None = None,
+        self,
+        ctx: Clause,
+        prefix: str,
+        paras: list[tuple[str, str]],
+        seq: int,
+        *,
+        kind: str = "text",
+        caption: str | None = None,
+        number: str | None = None,
         part: str | None = None,
     ) -> int:
         if not paras:
@@ -701,8 +728,17 @@ class SpecChunker:
             for piece, forced in self._enforce_cap(prefix, text, cap):
                 self.chunks.append(
                     self._make(
-                        ctx, seq, kind, piece, raw_text, media, group[0][0], caption=caption,
-                        number=number, part=part, forced=forced,
+                        ctx,
+                        seq,
+                        kind,
+                        piece,
+                        raw_text,
+                        media,
+                        group[0][0],
+                        caption=caption,
+                        number=number,
+                        part=part,
+                        forced=forced,
                     )
                 )
                 if kind == "text":
@@ -768,7 +804,13 @@ class SpecChunker:
                 notes_paras += [(table.source_file, raw) for _, raw, _ in table.notes]
                 first_id = self._chunk_id(ctx, seq)
                 seq = self._emit_text(
-                    ctx, prefix, notes_paras, seq, kind="table", caption=caption, number=number,
+                    ctx,
+                    prefix,
+                    notes_paras,
+                    seq,
+                    kind="table",
+                    caption=caption,
+                    number=number,
                     part="notes",
                 )
                 notes_line = f"Notes for this table are in chunk {first_id}."
@@ -791,29 +833,43 @@ class SpecChunker:
             for piece, forced in self._enforce_cap(prefix, text, self.table_hard):
                 self.chunks.append(
                     self._make(
-                        ctx, seq, "table", piece, raw_for(rows), media_for(rows),
-                        table.source_file, caption=caption, number=number, part=part,
+                        ctx,
+                        seq,
+                        "table",
+                        piece,
+                        raw_for(rows),
+                        media_for(rows),
+                        table.source_file,
+                        caption=caption,
+                        number=number,
+                        part=part,
                         forced=forced,
                     )
                 )
                 seq += 1
         # count each image once, not once per piece that repeats the header or notes
-        self.stats.image_placeholders += (
-            sum(lines[i].count(PLACEHOLDER) for i in header_idx + body_idx)
-            + notes_text.count(PLACEHOLDER)
-        )
+        self.stats.image_placeholders += sum(
+            lines[i].count(PLACEHOLDER) for i in header_idx + body_idx
+        ) + notes_text.count(PLACEHOLDER)
         return seq
 
 
 def chunk_parts(
-    parts: list[tuple[str, str]], soft: int, hard: int, table_hard: int | None = None,
+    parts: list[tuple[str, str]],
+    soft: int,
+    hard: int,
+    table_hard: int | None = None,
     max_tokens: int | None = None,
 ) -> tuple[list[Chunk], Stats]:
     return SpecChunker(soft, hard, table_hard, max_tokens).chunk(parts)
 
 
 def chunk_dir(
-    md_dir: Path, out_path: Path, soft: int, hard: int, table_hard: int | None = None,
+    md_dir: Path,
+    out_path: Path,
+    soft: int,
+    hard: int,
+    table_hard: int | None = None,
     max_tokens: int | None = None,
 ) -> Stats:
     files = sorted(p for p in md_dir.glob("*.md"))
@@ -835,8 +891,11 @@ def main() -> None:
     settings = get_chunk_settings()
     for source in SPECS:
         stats = chunk_dir(
-            source.md_dir, source.chunks_path, settings.chunk_soft_chars,
-            settings.chunk_hard_chars, settings.chunk_table_hard_chars,
+            source.md_dir,
+            source.chunks_path,
+            settings.chunk_soft_chars,
+            settings.chunk_hard_chars,
+            settings.chunk_table_hard_chars,
             settings.chunk_max_tokens,
         )
         print(stats.report())

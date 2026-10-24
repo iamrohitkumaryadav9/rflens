@@ -70,8 +70,9 @@ def counts(conn: Connection) -> tuple[int, int, int]:
     return (
         conn.execute(text("SELECT count(*) FROM secom_runs")).scalar_one(),
         conn.execute(text("SELECT count(*) FROM secom_measurements")).scalar_one(),
-        conn.execute(text("SELECT count(*) FROM data_sources WHERE name = :n"), {"n": SOURCE_NAME})
-        .scalar_one(),
+        conn.execute(
+            text("SELECT count(*) FROM data_sources WHERE name = :n"), {"n": SOURCE_NAME}
+        ).scalar_one(),
     )
 
 

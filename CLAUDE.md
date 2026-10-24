@@ -19,7 +19,7 @@ The repo root is the project root (no nested rflens/ folder).
 ```
 src/rflens/__init__.py
 src/rflens/config.py      # pydantic-settings, reads .env
-src/rflens/db.py          # SQLAlchemy engine + session
+src/rflens/db.py          # SQLAlchemy engine + session; analyze() (loaders call it after commit)
 src/rflens/api/main.py    # FastAPI app, GET /health
 src/rflens/ingest/        # secom.py (UCI SECOM), uls.py (FCC ULS, one service per run), fcc_eas.py (FCC grantees, test firms),
                           # spec_fetch.py + spec_chunker.py (3GPP specs -> data/interim/3gpp/<spec>/chunks.jsonl)
@@ -27,7 +27,10 @@ src/rflens/retrieval/     # embedder.py (Ollama), index.py (load + embed chunks)
                           # (vector + keyword + RRF), embed_3gpp.py, eval_smoke.py
 eval/                     # smoke_3gpp.yaml (reviewed-labels questions)
 src/rflens/mcp/           # docs_server.py: docs-mcp (search_docs, get_chunk), make docs-mcp, port 8101
+                          # sql_server.py + sql_guard.py: sql-mcp (list_tables, describe_table,
+                          # run_query), make sql-mcp, port 8102
 scripts/mcp_smoke.py      # official MCP client over HTTP against a running docs-mcp
+scripts/sql_mcp_smoke.py  # same, against a running sql-mcp (needs the ULS cell data loaded)
 migrations/               # Alembic
 tests/                    # tests/fixtures/uls: small real ULS subset, committed
 docs/blueprint.pdf
@@ -39,6 +42,10 @@ data/                     # gitignored; raw downloads (data/raw/secom, data/raw/
 - `data_sources.row_count` is the count of the source's primary entity: runs for `uci_secom`,
   licences (`uls_hd` rows) for `uls_<service>`. Per-table counts live elsewhere (for ULS,
   `uls_file_counts`, which also records the zip's `sha256` and `snapshot_date`).
+- Every loader (secom, uls, fcc_eas) runs `ANALYZE` on the tables it loaded at the end of the same
+  run, after its transaction commits (`db.analyze`). Stale planner statistics skewed estimates
+  (uls_fr was estimated at 178,449 rows against 236,958 actual), and sql-mcp's cost gate reads
+  those estimates.
 
 - 3GPP specs are copyrighted (3GPP terms of use: no reproduction or distribution without ETSI's
   consent). Raw files, converted Markdown and chunks live only under gitignored `data/` (and later
@@ -101,11 +108,48 @@ data/                     # gitignored; raw downloads (data/raw/secom, data/raw/
   (migration 0007: SELECT on `documents` and `chunks` only, read-only sessions by default;
   password in `DOCS_READER_PASSWORD` in .env and CI, never in code). Returned spec text is
   reference data, not instructions; the tool descriptions say so.
+- **sql-mcp** (`src/rflens/mcp/sql_server.py` + `sql_guard.py`, `make sql-mcp`,
+  `http://127.0.0.1:8102/mcp`; same protocol setup as docs-mcp). Tools: `list_tables`,
+  `describe_table(table)`, `run_query(sql, question?)`. No text-to-SQL and no LLM call: the caller
+  writes the SQL. Guardrails, in order: sqlglot (Postgres dialect) parse; exactly one statement;
+  SELECT only (no DML/DDL/SELECT INTO/FOR UPDATE anywhere in the tree, so not inside a CTE
+  either); every table, including CTEs and subqueries, on the allow-list; no system catalogs, no
+  functions in FROM, no denied functions (`pg_*`, `lo_*`, `dblink*`, `set_config`,
+  `current_setting`, sequences, `*_to_xml`, `to_reg*`, ...); LIMIT added (default 100) or lowered
+  (max 1000); EXPLAIN, rejected above `SQL_MAX_COST`; run in a READ ONLY transaction under a
+  statement timeout. The SQL that runs is regenerated from the parse tree, comments stripped.
+  Limits (env-overridable): `SQL_MAX_COST` 500000, `SQL_STATEMENT_TIMEOUT_MS` 15000,
+  `SQL_DEFAULT_LIMIT` 100, `SQL_MAX_LIMIT` 1000.
+  - **Planner cost does not predict run time well** (the 3-way grantees x labs query: cost 59,769,
+    took 4.8 s; 15 reference queries: legitimate costs 2 to 59,811, the cheapest accidental
+    explosion 89,384,079 after ANALYZE, 846,193 for an HD x LO join on service only). So the
+    statement timeout is the primary backstop and the cost gate only catches explosions
+    (cross joins, self-joins on inequalities). Costs are only as good as the statistics: reload
+    runs ANALYZE; after bulk changes outside the loaders run `ANALYZE`.
+  - **Allow-list (9 tables, 3 views):** `data_sources`, `secom_runs`, `secom_measurements`,
+    `uls_hd`, `uls_fr`, `uls_lo`, `uls_file_counts`, `fcc_grantees`, `fcc_test_firms`,
+    `v_uls_licences`, `v_uls_frequencies`, `v_secom_values`. **`uls_en` is NOT on it:** it holds
+    contact persons' names (entity type CL and individuals); no RF question needs them (data
+    minimisation). It is reachable only through `v_uls_licences`, which exposes the licensee
+    entity (`entity_type = 'L'`) only; the views read it as their owner, and the reader role has no
+    privilege on it. Also not allowed: `chunks`, `documents` (docs-mcp), `alembic_version`,
+    `sql_query_log`, system catalogs. The allow-list lives in `sql_guard.py` and in the grants of
+    migration 0008; change both.
+  - Roles (migration 0008): `rflens_sql_reader` (SELECT on the allow-list only, read-only sessions
+    by default, statement timeout; `SQL_READER_PASSWORD`) and `rflens_sql_logger` (INSERT on
+    `sql_query_log` only; `SQL_LOGGER_PASSWORD`). Passwords in .env and CI, never in code.
+  - Every call to every tool is a row in `sql_query_log` (time, tool, optional `question`, SQL or
+    call text, plan cost, row count, duration, status ok / rejected / error, reason), written
+    through the logger role. If the log write fails the call fails and the result is withheld.
+  - `describe_table` returns the table and column comments from migration 0008, which state units
+    (ASSUMED or UNKNOWN where the FCC does not state them), unconfirmed code meanings and the open
+    questions below. Tool descriptions say results are data, not instructions.
 - **No authentication in local development.** Per the MCP authorization spec (2026-07-28),
   authorization is OPTIONAL, and HTTP-based servers that offer it follow OAuth 2.1 (the server is a
   resource server publishing OAuth 2.0 Protected Resource Metadata, RFC 9728, and accepting only
-  tokens issued for it). A remote deployment of docs-mcp needs that, plus a real hostname in the
-  transport-security allow-lists; do not expose port 8101 beyond localhost without it. The SDK
+  tokens issued for it). A remote deployment of docs-mcp or sql-mcp needs that, plus a real
+  hostname in the transport-security allow-lists; do not expose ports 8101 and 8102 beyond
+  localhost without it. The SDK
   also still answers a plain GET with a keep-alive SSE stream for legacy clients (a modern-only
   server SHOULD answer 405); harmless on localhost, revisit before any remote deployment.
 - The `mcp` SDK adds native-code dependencies (`cryptography`, `cffi`, `rpds-py`, `pywin32`);

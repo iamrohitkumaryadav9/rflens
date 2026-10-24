@@ -37,8 +37,11 @@ def load_questions(path: Path) -> list[Question]:
     data = yaml.safe_load(path.read_text("utf-8"))
     return [
         Question(
-            q["id"], q["spec"], q["question"],
-            tuple(q.get("expected_clauses") or ()), tuple(q.get("expected_tables") or ()),
+            q["id"],
+            q["spec"],
+            q["question"],
+            tuple(q.get("expected_clauses") or ()),
+            tuple(q.get("expected_tables") or ()),
         )
         for q in data["questions"]
     ]
@@ -69,7 +72,11 @@ def recall_at_k(
         rows = []
         for q in questions:
             hits = search(
-                conn, embedder, q.question, mode=mode, top_k=k,
+                conn,
+                embedder,
+                q.question,
+                mode=mode,
+                top_k=k,
                 spec=q.spec if filter_spec else None,
             )
             rank = next((i for i, h in enumerate(hits, start=1) if is_hit(q, h)), None)
@@ -84,7 +91,8 @@ def main() -> None:
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--spec", help="only the questions about this spec, e.g. 38.101-1")
     parser.add_argument(
-        "--filter-spec", action="store_true",
+        "--filter-spec",
+        action="store_true",
         help="pass each question's spec to the search as a filter (default: search all specs)",
     )
     args = parser.parse_args()
@@ -94,17 +102,13 @@ def main() -> None:
     questions = [q for q in load_questions(args.file) if args.spec in (None, q.spec)]
     with get_engine().connect() as conn:
         done, total = conn.execute(
-            text(
-                "SELECT count(*) FILTER (WHERE embedding_model = :m), count(*) FROM chunks"
-            ),
+            text("SELECT count(*) FILTER (WHERE embedding_model = :m), count(*) FROM chunks"),
             {"m": embedder.model_id},
         ).one()
         print(f"model {embedder.model_id}: {done}/{total} chunks embedded")
         if not total or done < total:
             print("WARNING: not all chunks are embedded; recall numbers are not meaningful.")
-        results = recall_at_k(
-            conn, embedder, questions, k=args.top_k, filter_spec=args.filter_spec
-        )
+        results = recall_at_k(conn, embedder, questions, k=args.top_k, filter_spec=args.filter_spec)
     print(
         f"\n{args.file.name} (status: {load_status(args.file)}); spec filter: "
         f"{'ON (each question searches only its own spec)' if args.filter_spec else 'off'}; "

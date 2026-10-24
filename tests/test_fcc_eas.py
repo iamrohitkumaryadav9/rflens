@@ -142,8 +142,7 @@ def test_blank_name_row_is_null(conn: Connection) -> None:
     load(conn, PATHS)
     row = conn.execute(
         text(
-            "SELECT grantee_name, city, state, country FROM fcc_grantees "
-            "WHERE grantee_code = 'OAF'"
+            "SELECT grantee_name, city, state, country FROM fcc_grantees WHERE grantee_code = 'OAF'"
         )
     ).one()
     assert row == (None, None, None, None)

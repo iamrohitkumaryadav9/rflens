@@ -131,8 +131,16 @@ def _convert_one(docx: Path, md_dir: Path) -> None:
     out = md_dir / f"{docx.stem}.md"
     subprocess.run(
         [
-            "pandoc", str(docx), "-f", "docx", "-t", "gfm", "--wrap=none",
-            f"--extract-media={docx.stem}_media", "-o", str(out),
+            "pandoc",
+            str(docx),
+            "-f",
+            "docx",
+            "-t",
+            "gfm",
+            "--wrap=none",
+            f"--extract-media={docx.stem}_media",
+            "-o",
+            str(out),
         ],
         cwd=md_dir,  # relative media paths keep the Markdown portable inside md_dir
         check=True,

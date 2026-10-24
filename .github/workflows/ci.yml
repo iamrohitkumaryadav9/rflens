@@ -24,10 +24,13 @@ jobs:
     env:
       DATABASE_URL: postgresql+psycopg://rflens:rflens@localhost:5432/rflens
       DOCS_READER_PASSWORD: ci-only-docs-reader-password
+      SQL_READER_PASSWORD: ci-only-sql-reader-password
+      SQL_LOGGER_PASSWORD: ci-only-sql-logger-password
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
       - run: uv sync --frozen
       - run: uv run ruff check .
+      - run: uv run ruff format --check .
       - run: uv run alembic upgrade head
       - run: uv run pytest

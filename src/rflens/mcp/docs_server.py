@@ -199,13 +199,25 @@ def create_docs_server(
                 f"({e}); retry later or use mode='keyword'"
             ) from e
         return SearchResponse(
-            query=query, mode=chosen, spec=spec, k=k, notice=notice,
+            query=query,
+            mode=chosen,
+            spec=spec,
+            k=k,
+            notice=notice,
             results=[
                 SearchResult(
-                    chunk_id=h.chunk_id, spec=h.spec, version=h.version, clause=h.clause,
-                    clause_title=h.clause_title, kind=h.kind, table_number=h.table_number,
-                    caption=h.caption, table_part=h.table_part, score=round(h.score, 6),
-                    snippet=make_snippet(h.text), related_chunks=h.related_chunks,
+                    chunk_id=h.chunk_id,
+                    spec=h.spec,
+                    version=h.version,
+                    clause=h.clause,
+                    clause_title=h.clause_title,
+                    kind=h.kind,
+                    table_number=h.table_number,
+                    caption=h.caption,
+                    table_part=h.table_part,
+                    score=round(h.score, 6),
+                    snippet=make_snippet(h.text),
+                    related_chunks=h.related_chunks,
                 )
                 for h in hits
             ],
@@ -258,18 +270,30 @@ def create_docs_server(
                 }
                 related = [
                     RelatedChunk(
-                        chunk_id=i, kind=found[i].kind, clause=found[i].clause,
-                        table_part=found[i].table_part, text=found[i].text,
+                        chunk_id=i,
+                        kind=found[i].kind,
+                        clause=found[i].clause,
+                        table_part=found[i].table_part,
+                        text=found[i].text,
                     )
                     for i in related_ids
                     if i in found
                 ]
         return ChunkResponse(
-            chunk_id=row.chunk_id, spec=row.spec, version=row.version, release=row.release,
-            kind=row.kind, clause=row.clause, clause_title=row.clause_title,
-            parent_path=list(row.parent_path), table_number=row.table_number,
-            caption=row.caption, table_part=row.table_part, text=row.text,
-            related_chunk_ids=related_ids, related=related,
+            chunk_id=row.chunk_id,
+            spec=row.spec,
+            version=row.version,
+            release=row.release,
+            kind=row.kind,
+            clause=row.clause,
+            clause_title=row.clause_title,
+            parent_path=list(row.parent_path),
+            table_number=row.table_number,
+            caption=row.caption,
+            table_part=row.table_part,
+            text=row.text,
+            related_chunk_ids=related_ids,
+            related=related,
         )
 
     return server

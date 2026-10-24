@@ -71,25 +71,40 @@ def load_chunks(
             """
         ),
         {
-            "spec": source.spec, "version": source.version, "release": source.release,
-            "zip": source.zip_name, "sha": source.sha256,
+            "spec": source.spec,
+            "version": source.version,
+            "release": source.release,
+            "zip": source.zip_name,
+            "sha": source.sha256,
         },
     ).scalar_one()
     params = []
     for r in rows:
         metadata = {
-            "position": r["position"], "parent_titles": r["parent_titles"],
-            "source_file": r["source_file"], "media": r["media"],
-            "image_placeholders": r["image_placeholders"], "forced_split": r["forced_split"],
-            "char_count": r["char_count"], "related_chunks": related_chunks(r["text"]),
+            "position": r["position"],
+            "parent_titles": r["parent_titles"],
+            "source_file": r["source_file"],
+            "media": r["media"],
+            "image_placeholders": r["image_placeholders"],
+            "forced_split": r["forced_split"],
+            "char_count": r["char_count"],
+            "related_chunks": related_chunks(r["text"]),
         }
         params.append(
             {
-                "chunk_id": r["chunk_id"], "doc": doc_id, "kind": r["kind"], "clause": r["clause"],
-                "title": r["clause_title"], "path": r["parent_path"],
-                "table_number": r["table_number"], "caption": r["table_caption"],
-                "part": r["table_part"], "text": r["text"], "raw": r["raw_text"],
-                "metadata": json.dumps(metadata), "sha": text_sha256(r["text"]),
+                "chunk_id": r["chunk_id"],
+                "doc": doc_id,
+                "kind": r["kind"],
+                "clause": r["clause"],
+                "title": r["clause_title"],
+                "path": r["parent_path"],
+                "table_number": r["table_number"],
+                "caption": r["table_caption"],
+                "part": r["table_part"],
+                "text": r["text"],
+                "raw": r["raw_text"],
+                "metadata": json.dumps(metadata),
+                "sha": text_sha256(r["text"]),
             }
         )
     if params:
@@ -213,7 +228,9 @@ def embed_pending(
             ),
             [
                 {
-                    "v": vector_literal(vec), "model": model, "id": r.chunk_id,
+                    "v": vector_literal(vec),
+                    "model": model,
+                    "id": r.chunk_id,
                     "meta": json.dumps({"tokens": n}),  # the model's real token count
                 }
                 for r, vec, n in zip(batch, result.vectors, result.token_counts, strict=True)

@@ -1,4 +1,4 @@
-.PHONY: up down migrate test lint run load-secom load-uls load-fcc-eas fetch-3gpp chunk-3gpp embed-3gpp eval-smoke docs-mcp
+.PHONY: up down migrate test lint run load-secom load-uls load-fcc-eas fetch-3gpp chunk-3gpp embed-3gpp eval-smoke docs-mcp sql-mcp
 
 up:
 	docker compose up -d --wait
@@ -14,6 +14,7 @@ test:
 
 lint:
 	uv run ruff check .
+	uv run ruff format --check .
 
 load-secom:
 	uv run python -m rflens.ingest.secom
@@ -41,6 +42,9 @@ eval-smoke:
 
 docs-mcp:
 	uv run python -m rflens.mcp.docs_server
+
+sql-mcp:
+	uv run python -m rflens.mcp.sql_server
 
 run:
 	uv run uvicorn rflens.api.main:app --host 127.0.0.1 --port 8000

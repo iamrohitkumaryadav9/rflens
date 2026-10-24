@@ -24,7 +24,7 @@ from pathlib import Path
 
 from sqlalchemy import Connection, text
 
-from rflens.db import get_engine
+from rflens.db import analyze, get_engine
 
 RAW_DIR = Path(__file__).resolve().parents[3] / "data" / "raw" / "fcc_eas"
 CSV_URL = "https://opendata.fcc.gov/api/views/{dataset_id}/rows.csv?accessType=DOWNLOAD"
@@ -100,8 +100,16 @@ GRANTEES = Spec(
     data_source="fcc_eas_grantees",
     cutoff_effect="grantees registered after it are absent",
     header=[
-        "grantee_code", "grantee_name", "mailing_address", "po_box", "city", "state", "country",
-        "zip_code", "contact_name", "date_received",
+        "grantee_code",
+        "grantee_name",
+        "mailing_address",
+        "po_box",
+        "city",
+        "state",
+        "country",
+        "zip_code",
+        "contact_name",
+        "date_received",
     ],
     columns=[
         ("grantee_code", "grantee_code", _code),
@@ -122,9 +130,25 @@ TEST_FIRMS = Spec(
     cutoff_effect="all expiration dates are long past and the list reflects accreditation "
     "around 2021",
     header=[
-        "firm_name", "location", "accreditation", "mra", "designation_number", "expiration_date",
-        "contact", "contact_title", "address", "po_box", "mail_stop", "city", "state", "zip",
-        "country", "email_address", "phone_number", "fax_number", "contract",
+        "firm_name",
+        "location",
+        "accreditation",
+        "mra",
+        "designation_number",
+        "expiration_date",
+        "contact",
+        "contact_title",
+        "address",
+        "po_box",
+        "mail_stop",
+        "city",
+        "state",
+        "zip",
+        "country",
+        "email_address",
+        "phone_number",
+        "fax_number",
+        "contract",
     ],
     columns=[
         ("designation_number", "designation_number", _required),
@@ -272,6 +296,7 @@ def main() -> None:
             spec.table: conn.execute(text(f"SELECT count(*) FROM {spec.table}")).scalar_one()
             for spec in SPECS
         }
+    analyze([*counts, "data_sources"])  # after commit
     elapsed = time.perf_counter() - start
     print(" ".join(f"{table}={n}" for table, n in counts.items()) + f" elapsed={elapsed:.1f}s")
 
