@@ -95,13 +95,13 @@ questions:
   type: sql
   status: reviewed
   question: How many cellular licences are currently active?
-  reference_sql: SELECT count(*) AS active_licences FROM v_uls_licences WHERE license_status = 'A'
-  notes: 'Interpretation: currently active = license_status ''A''. The FCC layout document does not define the status codes (open question b), so this meaning is assumed, not confirmed. Only the cell service is loaded.'
+  reference_sql: SELECT count(*) AS active_licences FROM v_uls_licences WHERE license_status = 'A' AND NOT is_lease
+  notes: 'Interpretation: licences exclude spectrum leases (call sign L + 9 digits, v_uls_licences.is_lease; open question j); ''A'' assumed active: currently active = license_status ''A'', whose meaning the FCC layout document does not define (open question b). Only the cell service is loaded. With leases the count would be 3,861 (2,129 of them leases).'
   reference_result:
     columns:
     - active_licences
     rows:
-    - - 3861
+    - - 1732
     row_count: 1
     checked_on: '2026-10-24'
     via: sql-mcp
@@ -109,26 +109,26 @@ questions:
   type: sql
   status: reviewed
   ordered: true
-  question: Which 3 licensees hold the most active cellular licences?
+  question: Which 3 licensees, counted by FCC Registration Number, hold the most active cellular licences (excluding spectrum leases)?
   reference_sql: |-
-    SELECT licensee_name, count(*) AS active_licences
+    SELECT licensee_frn, count(*) AS active_licences
     FROM v_uls_licences
-    WHERE license_status = 'A'
-    GROUP BY licensee_name
-    ORDER BY active_licences DESC, licensee_name
+    WHERE license_status = 'A' AND NOT is_lease
+    GROUP BY licensee_frn
+    ORDER BY active_licences DESC, licensee_frn
     LIMIT 3
-  notes: 'Interpretation: active = license_status ''A'' (assumed, open question b); licensee = the entity of type ''L'' (meaning unconfirmed), grouped by name. No ties at the cutoff (1439, 446, 429, then 283).'
+  notes: 'Interpretation: active = license_status ''A'' (assumed, open question b); spectrum leases excluded with NOT is_lease (open question j); licensee = the entity of type ''L'' (meaning unconfirmed), counted by licensee_frn so that spelling variants of one company count together (open question k); the result is the FRN and the count, ranked. Top 3: 0003290673 Cellco Partnership 422, 0003291192 New Cingular Wireless PCS 315, 0014980726 AT&T Mobility Spectrum 283; rank 4 (0002942159 Alltel) has 278, so no tie at the cutoff. Counted by name the ranking would differ.'
   reference_result:
     columns:
-    - licensee_name
+    - licensee_frn
     - active_licences
     rows:
-    - - AST & Science, LLC
-      - 1439
-    - - Trace-Tek
-      - 446
-    - - Cellco Partnership
-      - 429
+    - - 0003290673
+      - 422
+    - - 0003291192
+      - 315
+    - - 0014980726
+      - 283
     row_count: 3
     checked_on: '2026-10-24'
     via: sql-mcp
@@ -189,17 +189,20 @@ questions:
 - id: sql-10
   type: sql
   status: reviewed
-  question: How many cellular licences expired in 2020?
+  question: How many cellular licences and how many spectrum leases expired in 2020?
   reference_sql: |-
-    SELECT count(*) AS licences
+    SELECT count(*) FILTER (WHERE NOT is_lease) AS licences,
+           count(*) FILTER (WHERE is_lease) AS leases
     FROM v_uls_licences
     WHERE expired_date >= '2020-01-01' AND expired_date < '2021-01-01'
-  notes: 'Interpretation: expired in 2020 = expired_date within calendar 2020, whatever the current status.'
+  notes: 'Interpretation: expired in 2020 = expired_date within calendar 2020, whatever the current status; licences and spectrum leases (call sign L + 9 digits, v_uls_licences.is_lease; open question j) are counted separately, in that column order. Expected 2 licences and 26 leases.'
   reference_result:
     columns:
     - licences
+    - leases
     rows:
-    - - 28
+    - - 2
+      - 26
     row_count: 1
     checked_on: '2026-10-24'
     via: sql-mcp
@@ -310,6 +313,29 @@ questions:
     rows:
     - - '2026-10-18'
       - US Government Work (https://www.usa.gov/government-works)
+    row_count: 1
+    checked_on: '2026-10-24'
+    via: sql-mcp
+- id: sql-15
+  type: sql
+  status: reviewed
+  ordered: true
+  question: Which lessee holds the most active spectrum leases, and how many?
+  reference_sql: |-
+    SELECT min(licensee_name) AS lessee, count(*) AS active_leases
+    FROM v_uls_licences
+    WHERE is_lease AND license_status = 'A'
+    GROUP BY licensee_frn
+    ORDER BY active_leases DESC, licensee_frn
+    LIMIT 1
+  notes: 'Interpretation: a spectrum lease is a row with is_lease (call sign L + 9 digits; open question j); the lessee is the entity of type ''L'' of the lease row (meaning unconfirmed, open question b); active = license_status ''A'' (assumed); counted by licensee_frn, shown by name. AST & Science, LLC leads with 1,439; rank 2 (Trace-Tek) has 446.'
+  reference_result:
+    columns:
+    - lessee
+    - active_leases
+    rows:
+    - - AST & Science, LLC
+      - 1439
     row_count: 1
     checked_on: '2026-10-24'
     via: sql-mcp

@@ -55,7 +55,7 @@ data/                     # gitignored; raw downloads (data/raw/secom, data/raw/
 ## Conventions
 
 - `data_sources.row_count` is the count of the source's primary entity: runs for `uci_secom`,
-  licences (`uls_hd` rows) for `uls_<service>`. Per-table counts live elsewhere (for ULS,
+  HD rows (`uls_hd` rows: licences and spectrum leases, see open question j) for `uls_<service>`. Per-table counts live elsewhere (for ULS,
   `uls_file_counts`, which also records the zip's `sha256` and `snapshot_date`).
 - Every loader (secom, uls, fcc_eas) runs `ANALYZE` on the tables it loaded at the end of the same
   run, after its transaction commits (`db.analyze`). Stale planner statistics skewed estimates
@@ -203,7 +203,7 @@ data/                     # gitignored; raw downloads (data/raw/secom, data/raw/
   return the entity and its measure and break ties by key ascending; never guess units, report
   ASSUMED/UNKNOWN ones in notes; refuse data changes, personal contact data and out-of-scope
   questions. Six worked examples, none from the golden set (a test enforces it).
-- **Golden set** `eval/golden.yaml` (all question types; ids `sql-01..14`, `refuse-01..03`, all
+- **Golden set** `eval/golden.yaml` (all question types; ids `sql-01..15`, `refuse-01..03`, all
   `reviewed` by the project owner on 2026-10-24). sql questions carry `reference_sql` and a stored
   `reference_result` produced through sql-mcp (`make golden-refresh`, needs `make sql-mcp`);
   `ordered: true` where the question asks for a ranking; `must_mention` where the agent's notes
@@ -281,6 +281,32 @@ Details are for the `cell` service, snapshot complete/l_cell.zip dated 2026-10-1
   is kept as written. In kept `fcc_grantees` fields there is exactly 1 `NIL` (2AA23, city) and
   also 1 `nil` (2AJCJ, city), 1 `NONE` (OQ4, city) and 1 `-` (PK4, city). `fcc_test_firms` has
   none. Whether these mean "no value" is unconfirmed.
+
+- (j) **Spectrum leases in `uls_hd`** (resolved 2026-10-24, with unconfirmed details). 3,174 of the
+  5,464 HD rows of the cell file have a call sign of the form L + 9 digits (e.g. L000070487): they
+  are spectrum LEASES, not licences; the other 2,290 are licences. `v_uls_licences.is_lease` marks
+  them (`call_sign ~ '^L[0-9]{9}$'`; never NULL). Evidence: (1) FCC ULS Public Access Database
+  Definitions v9.0 (https://www.fcc.gov/sites/default/files/public_access_database_definitions_v9_0.pdf,
+  record layouts, p. 74-77): the Lease Dates record [LD] field 5 is "Call Sign (Lease Id)", the
+  Lease Link record [LL] holds Call Sign + Lease ID + Licensee Id, and the Lease Classification
+  [LC], leased location, antenna and frequency records are keyed by Lease ID; (2) l_cell.zip
+  contains ll.dat, lc.dat, l3.dat, a3.dat and f3.dat, and 3,169 of the 3,174 L-pattern HD rows have
+  an LL and an LC record linking the lease ID to a licence call sign (e.g. L000070487 -> licence
+  KNKA796); (3) an FCC Wireless Telecommunications Bureau public notice (report 20538,
+  2026-07-15, https://docs.fcc.gov/public/attachments/DOC-423045A1.pdf) lists "Call Sign or Lead
+  Call Sign: L000031726" for a De Facto Transfer Lease with lessee and licensee, and a separate
+  "Lease Identifier: L000045030". The layout document does NOT say outright that leases appear as
+  HD rows with the lease ID as call sign; that is shown by the data (2). Unconfirmed: 5 pattern
+  rows (L000001242-1245, L000002482; status T, 2006-2007) have no LL/LC record; the lease
+  classification codes (ML, TL) are not defined in the layout document. Consequences: leases have
+  no `uls_fr` or `uls_lo` rows (0 of 3,174; their frequencies and locations are in the lease files,
+  not loaded); the `L` entity of a lease row is the LESSEE; `data_sources.row_count` for
+  `uls_cell` (5,464) counts HD rows, i.e. licences and leases; active (status A): 1,732 licences
+  and 2,129 leases. Use `is_lease = false` for questions about licences.
+- (k) Licensee names are not unique per company: the same licensee id / FRN appears with different
+  spellings ("NEW CINGULAR WIRELESS PCS, LLC" 177 and "New Cingular Wireless PCS, LLC" 138 active
+  licences, same FRN 0003291192; "Cellco Partnership" 418 and "CELLCO PARTNERSHIP" 4). Counting by
+  name splits them; counting by `licensee_frn` or `licensee_id` does not.
 
 ## Working rules
 

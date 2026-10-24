@@ -349,7 +349,26 @@ def test_golden_file_structure_and_contents(tools, qtext) -> None:
     golden = load_golden()
     assert problems(golden) == []
     by_type = {t: [q for q in golden if q.type == t] for t in ("sql", "refuse")}
-    assert (len(by_type["sql"]), len(by_type["refuse"]), len(golden)) == (14, 3, 17)
+    assert (len(by_type["sql"]), len(by_type["refuse"]), len(golden)) == (15, 3, 18)
+    by_id = {q.id: q for q in golden}
+    assert by_id["sql-10"].question == (
+        "How many cellular licences and how many spectrum leases expired in 2020?"
+    )
+    assert by_id["sql-10"].reference_result.rows == [[2, 26]]  # licences, leases: two columns
+    assert by_id["sql-05"].reference_result.rows == [[1732]]
+    assert "NOT is_lease" in by_id["sql-05"].reference_sql
+    assert (
+        "spectrum leases" in by_id["sql-05"].notes and "'A' assumed active" in by_id["sql-05"].notes
+    )
+    assert by_id["sql-06"].question == (
+        "Which 3 licensees, counted by FCC Registration Number, hold the most active cellular "
+        "licences (excluding spectrum leases)?"
+    )
+    top3 = by_id["sql-06"].reference_result.rows
+    assert [r[0] for r in top3] == ["0003290673", "0003291192", "0014980726"]
+    assert top3[2][1] == 283 and "278" in by_id["sql-06"].notes  # rank 4 is lower: no tie
+    assert by_id["sql-15"].reference_result.rows == [["AST & Science, LLC", 1439]]
+    assert "446" in by_id["sql-15"].notes  # rank 2 is lower
     assert {q.status for q in golden} == {"reviewed"}
     assert next(q for q in golden if q.id == "sql-08").question == (
         "How many licensed cellular transmitter locations are in Texas?"
@@ -369,7 +388,7 @@ def test_golden_file_structure_and_contents(tools, qtext) -> None:
     for q in by_type["refuse"]:
         assert q.expected_refusal and q.reference_sql is None
     ranked = {q.id for q in golden if q.ordered}
-    assert ranked == {"sql-03", "sql-06", "sql-07", "sql-11", "sql-13"}
+    assert ranked == {"sql-03", "sql-06", "sql-07", "sql-11", "sql-13", "sql-15"}
     erp = next(q for q in golden if q.id == "sql-09")
     assert erp.must_mention == ["unknown"] and "UNKNOWN" in erp.notes
     assert all(
