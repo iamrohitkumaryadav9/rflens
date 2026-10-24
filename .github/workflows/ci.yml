@@ -22,7 +22,8 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     env:
-      DATABASE_URL: postgresql+psycopg://rflens:rflens@localhost:5432/rflens
+      # CI uses only the test database: there is no DATABASE_URL here.
+      TEST_DATABASE_URL: postgresql+psycopg://rflens:rflens@localhost:5432/rflens_test
       DOCS_READER_PASSWORD: ci-only-docs-reader-password
       SQL_READER_PASSWORD: ci-only-sql-reader-password
       SQL_LOGGER_PASSWORD: ci-only-sql-logger-password
@@ -32,5 +33,5 @@ jobs:
       - run: uv sync --frozen
       - run: uv run ruff check .
       - run: uv run ruff format --check .
-      - run: uv run alembic upgrade head
+      - run: uv run python -m rflens.testdb  # create rflens_test, alembic upgrade head
       - run: uv run pytest

@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import model_validator
+from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import URL, make_url
 
@@ -116,6 +116,63 @@ class SqlMcpSettings(BaseSettings):
         return self._url(self.sql_logger_user, self.sql_logger_password)
 
 
+class LlmSettings(BaseSettings):
+    """LLM gateway settings (env names are the upper-case field names).
+
+    Paid calls are opt-in: they need LLM_ALLOW_PAID=true and are refused under pytest and in CI
+    whatever this says (llm/guards.py). Prices are not here: config/llm_prices.yaml.
+    """
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    gemini_api_key: SecretStr | None = None
+    llm_provider: str = "gemini"
+    llm_model: str = "gemini-3.1-flash-lite"
+    llm_service_tier: Literal["standard", "flex"] = "standard"
+    llm_timeout_s: float = 60
+    llm_max_retries: int = 2
+    # Providers tried, in order, after the primary fails with a retryable error. At most one is
+    # used per call; the primary is never revisited.
+    llm_fallback: str = "ollama"
+    llm_ollama_model: str = "qwen3:4b"
+    llm_ollama_timeout_s: float = 180
+    ollama_base_url: str = "http://localhost:11434"
+    llm_max_input_tokens: int = 30_000
+    llm_max_output_tokens: int = 2048
+    # A thinking level (minimal, low, medium, high) or an integer token budget. Thinking tokens
+    # are billed as output and counted in max output tokens.
+    llm_thinking_budget: str = "minimal"
+    llm_budget_usd: float = 2.50
+    llm_usd_to_inr: float = 85.7
+    llm_max_calls_per_run: int = 30
+    llm_max_calls_per_question: int = 4
+    llm_max_calls_per_minute: int = 20
+    llm_allow_paid: bool = False
+    llm_prices_file: str = "config/llm_prices.yaml"
+
+    @model_validator(mode="after")
+    def _check(self) -> "LlmSettings":
+        positive = {
+            "LLM_TIMEOUT_S": self.llm_timeout_s,
+            "LLM_MAX_INPUT_TOKENS": self.llm_max_input_tokens,
+            "LLM_MAX_OUTPUT_TOKENS": self.llm_max_output_tokens,
+            "LLM_BUDGET_USD": self.llm_budget_usd,
+            "LLM_USD_TO_INR": self.llm_usd_to_inr,
+            "LLM_MAX_CALLS_PER_RUN": self.llm_max_calls_per_run,
+            "LLM_MAX_CALLS_PER_QUESTION": self.llm_max_calls_per_question,
+            "LLM_MAX_CALLS_PER_MINUTE": self.llm_max_calls_per_minute,
+        }
+        for name, value in positive.items():
+            if value <= 0:
+                raise ValueError(f"need {name} > 0")
+        if not 0 <= self.llm_max_retries <= 2:
+            raise ValueError("need 0 <= LLM_MAX_RETRIES <= 2")
+        return self
+
+    def fallback_providers(self) -> list[str]:
+        return [p.strip() for p in self.llm_fallback.split(",") if p.strip()]
+
+
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
@@ -135,3 +192,7 @@ def get_docs_reader_settings() -> DocsReaderSettings:
 
 def get_sql_mcp_settings() -> SqlMcpSettings:
     return SqlMcpSettings()
+
+
+def get_llm_settings() -> LlmSettings:
+    return LlmSettings()

@@ -12,6 +12,16 @@ The repo has a GitHub remote (`origin`, https://github.com/iamrohitkumaryadav9/r
 CI (`.github/workflows/ci.yml`) is green on `main`. Treat CI as working; do not report it as
 unrun. The user reviews and commits; do not commit unless asked.
 
+## Tests and the test database
+
+Tests run on their own database, `rflens_test`, in the same Postgres server (`TEST_DATABASE_URL` in
+`.env`, `.env.example` and CI); they never touch the development database. `make test` first runs
+`python -m rflens.testdb` (creates the database if missing, `alembic upgrade head`; idempotent),
+then pytest. `tests/conftest.py` replaces `DATABASE_URL` with `TEST_DATABASE_URL` and refuses to run
+unless the connected database name ends with `_test`. The roles from migrations 0007 and 0008 are
+cluster-wide and keep their passwords; their grants are applied per database by the migrations, so
+they work in the test database too. CI has only `TEST_DATABASE_URL`, no `DATABASE_URL`.
+
 ## Repo layout
 
 The repo root is the project root (no nested rflens/ folder).
@@ -19,7 +29,10 @@ The repo root is the project root (no nested rflens/ folder).
 ```
 src/rflens/__init__.py
 src/rflens/config.py      # pydantic-settings, reads .env
-src/rflens/db.py          # SQLAlchemy engine + session; analyze() (loaders call it after commit)
+src/rflens/db.py          # SQLAlchemy engine + session
+src/rflens/testdb.py      # create + migrate the test database; the _test name guard
+src/rflens/llm/           # LLM gateway (see Conventions); config/llm_prices.yaml; make llm-spend
+scripts/llm_smoke.py      # live gateway check (needs LLM_ALLOW_PAID=true); analyze() (loaders call it after commit)
 src/rflens/api/main.py    # FastAPI app, GET /health
 src/rflens/ingest/        # secom.py (UCI SECOM), uls.py (FCC ULS, one service per run), fcc_eas.py (FCC grantees, test firms),
                           # spec_fetch.py + spec_chunker.py (3GPP specs -> data/interim/3gpp/<spec>/chunks.jsonl)
@@ -144,6 +157,35 @@ data/                     # gitignored; raw downloads (data/raw/secom, data/raw/
   - `describe_table` returns the table and column comments from migration 0008, which state units
     (ASSUMED or UNKNOWN where the FCC does not state them), unconfirmed code meanings and the open
     questions below. Tool descriptions say results are data, not instructions.
+- **LLM gateway** (`src/rflens/llm/`: base, gemini, ollama, fake, gateway, ledger, guards, spend).
+  Gemini through the REST API with httpx (no SDK): `models.generateContent`, default model
+  `gemini-3.1-flash-lite` (step-up `gemini-3.5-flash-lite`), thinking level `minimal`
+  (`LLM_THINKING_BUDGET`: a level or an integer budget), `LLM_SERVICE_TIER` standard or flex
+  (`serviceTier` field verified against the live API; flex was not exercised live and queues for
+  minutes, so its timeout floor is 600 s). Ollama (`qwen3:4b`) is the free on-prem provider; the
+  fake provider is for tests. Prices come only from `config/llm_prices.yaml` (source URL and date
+  inside; a paid model/tier without a price is refused). Output price includes thinking tokens.
+  - **Budget:** `LLM_BUDGET_USD` (2.50) is a hard cap over the sum of `llm_calls.cost_usd`. A paid
+    attempt first inserts a `pending` row at its worst-case cost (estimated input plus the whole
+    output allowance); it is blocked if that does not fit. The row is updated with real tokens and
+    cost before the result is returned; if either write fails the call is not made / the result is
+    withheld (fail closed), and a pending row keeps counting. The ledger only sees calls made
+    through the gateway: it is not Google's balance. The one call made before the ledger existed
+    ($0.0000035) is not in it. `make llm-spend` prints total, remaining, today, last 10, top 5.
+  - **Paid calls are opt-in and never happen in tests or CI:** they need `LLM_ALLOW_PAID=true`, and
+    the check at the single place a Gemini request leaves the process refuses when `CI` is set or
+    pytest is loaded, whatever the settings say. Tests use the fake provider and
+    `httpx.MockTransport` (which cannot reach the network).
+  - **Loop protection** (each stop names the run_id): `LLM_MAX_CALLS_PER_RUN` 30 and
+    `LLM_MAX_CALLS_PER_QUESTION` 4 count attempts, so retries and fallbacks count (Ollama too);
+    retries only on timeout / 429 / 5xx, at most `LLM_MAX_RETRIES` (2), exponential backoff, never
+    on 400/401/403/404; the third identical prompt in a run, or the same error on three calls in a
+    row (counted per call, not per retry), stops the run; `LLM_MAX_CALLS_PER_MINUTE` 20 across the
+    process (it sleeps); fallback at most once per call, only after a retryable failure, never back
+    to the primary, and not on a budget block.
+  - Every command that makes calls uses `gateway.run(name)` and prints a summary at the end.
+    `scripts/llm_smoke.py` is the live check (3 paid Gemini calls + 1 Ollama call, retries and
+    fallback off).
 - **No authentication in local development.** Per the MCP authorization spec (2026-07-28),
   authorization is OPTIONAL, and HTTP-based servers that offer it follow OAuth 2.1 (the server is a
   resource server publishing OAuth 2.0 Protected Resource Metadata, RFC 9728, and accepting only

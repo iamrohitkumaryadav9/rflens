@@ -1,0 +1,21 @@
+# LLM prices in USD per 1,000,000 tokens. The gateway reads prices only from this file.
+# Output prices include thinking tokens (Google bills them as output).
+#
+# Source: https://ai.google.dev/gemini-api/docs/pricing
+# Page "Last updated 2026-10-22 UTC"; the standard prices were confirmed by the project owner on
+# that page, as were the gemini-3.1-flash-lite flex prices.
+# Check the page again when it changes, and update `retrieved` with the new date.
+retrieved: 2026-10-22
+source_url: https://ai.google.dev/gemini-api/docs/pricing
+per_tokens: 1000000
+
+providers:
+  gemini:
+    gemini-3.1-flash-lite:
+      standard: {input: 0.25, output: 1.50}
+      flex: {input: 0.125, output: 0.75}
+    gemini-3.5-flash-lite:
+      standard: {input: 0.30, output: 2.50}
+      # Derived, not read from a table: the flex page says flex is billed at 50% of standard.
+      flex: {input: 0.15, output: 1.25}
+  # ollama runs locally and costs nothing: no entry, the gateway records zero.

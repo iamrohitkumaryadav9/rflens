@@ -1,4 +1,4 @@
-.PHONY: up down migrate test lint run load-secom load-uls load-fcc-eas fetch-3gpp chunk-3gpp embed-3gpp eval-smoke docs-mcp sql-mcp
+.PHONY: up down migrate test-db test lint run load-secom load-uls load-fcc-eas fetch-3gpp chunk-3gpp embed-3gpp eval-smoke docs-mcp sql-mcp llm-spend
 
 up:
 	docker compose up -d --wait
@@ -9,7 +9,11 @@ down:
 migrate:
 	uv run alembic upgrade head
 
-test:
+# Creates the test database if missing and migrates it (idempotent); tests never use DATABASE_URL.
+test-db:
+	uv run python -m rflens.testdb
+
+test: test-db
 	uv run pytest
 
 lint:
@@ -45,6 +49,10 @@ docs-mcp:
 
 sql-mcp:
 	uv run python -m rflens.mcp.sql_server
+
+# Spend so far, from the llm_calls ledger (total, remaining, today, last calls, top purposes).
+llm-spend:
+	uv run python -m rflens.llm.spend
 
 run:
 	uv run uvicorn rflens.api.main:app --host 127.0.0.1 --port 8000
