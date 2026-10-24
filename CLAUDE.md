@@ -31,6 +31,8 @@ src/rflens/__init__.py
 src/rflens/config.py      # pydantic-settings, reads .env
 src/rflens/db.py          # SQLAlchemy engine + session
 src/rflens/testdb.py      # create + migrate the test database; the _test name guard
+src/rflens/agents/        # sql_agent.py (+ sql_prompt.py, sql_tools.py: MCP client)
+src/rflens/eval/          # golden.py, scorer.py, eval_sql.py; golden set in eval/golden.yaml
 src/rflens/llm/           # LLM gateway (see Conventions); config/llm_prices.yaml; make llm-spend
 scripts/llm_smoke.py      # live gateway check (needs LLM_ALLOW_PAID=true); analyze() (loaders call it after commit)
 src/rflens/api/main.py    # FastAPI app, GET /health
@@ -151,6 +153,9 @@ data/                     # gitignored; raw downloads (data/raw/secom, data/raw/
   - Roles (migration 0008): `rflens_sql_reader` (SELECT on the allow-list only, read-only sessions
     by default, statement timeout; `SQL_READER_PASSWORD`) and `rflens_sql_logger` (INSERT on
     `sql_query_log` only; `SQL_LOGGER_PASSWORD`). Passwords in .env and CI, never in code.
+  - `truncated` in a `run_query` response is exact: the query runs with `LIMIT n + 1`, at most `n`
+    rows are returned, and `truncated` is true only if the extra row came back (an explicit
+    `LIMIT 3` with exactly 3 rows is not truncated). `executed_sql` shows the query with `LIMIT n`.
   - Every call to every tool is a row in `sql_query_log` (time, tool, optional `question`, SQL or
     call text, plan cost, row count, duration, status ok / rejected / error, reason), written
     through the logger role. If the log write fails the call fails and the result is withheld.
@@ -186,6 +191,30 @@ data/                     # gitignored; raw downloads (data/raw/secom, data/raw/
   - Every command that makes calls uses `gateway.run(name)` and prints a summary at the end.
     `scripts/llm_smoke.py` is the live check (3 paid Gemini calls + 1 Ollama call, retries and
     fallback off).
+- **SQL agent** (`src/rflens/agents/sql_agent.py`, a plain function `answer_question`; week 4 wraps
+  it as a LangGraph node). Agents never connect to Postgres: it reaches data only through sql-mcp
+  over MCP (`sql_tools.py`; URL in `SQL_MCP_URL`, default `http://127.0.0.1:8102/mcp`). Schema
+  context (list_tables + describe_table, with the column comments) is built once per run. The
+  gateway returns JSON `{refuse, refuse_reason, sql, tables_used, assumptions}`; sql-mcp rejections
+  and Postgres errors go back to the model, at most 2 corrections (so at most 3 generations); the
+  gateway's per-question cap (4) is the hard limit and ends that question as `failed`, while run
+  cap, budget, loop detector and ledger failures stop the command. The question text is passed to
+  `run_query`, so `sql_query_log` links SQL to questions. Prompt rules (sql_prompt.py): rankings
+  return the entity and its measure and break ties by key ascending; never guess units, report
+  ASSUMED/UNKNOWN ones in notes; refuse data changes, personal contact data and out-of-scope
+  questions. Six worked examples, none from the golden set (a test enforces it).
+- **Golden set** `eval/golden.yaml` (all question types; ids `sql-01..14`, `refuse-01..03`, all
+  `reviewed` by the project owner on 2026-10-24). sql questions carry `reference_sql` and a stored
+  `reference_result` produced through sql-mcp (`make golden-refresh`, needs `make sql-mcp`);
+  `ordered: true` where the question asks for a ranking; `must_mention` where the agent's notes
+  must say something (sql-09: the ERP unit is unknown). Scorer (`eval/scorer.py`): column names
+  ignored; relaxed column match (every reference column must have an agent column with the same
+  values, extra agent columns are fine, the row count must match exactly); order only if
+  `ordered`; numbers to 1e-6 relative; NULL equals NULL only; empty results need at least as many
+  columns as the reference. `make eval-sql` (PAID; needs
+  `LLM_ALLOW_PAID=true` and a running sql-mcp; `DRY=1` prints the plan and worst-case cost and
+  calls nothing) runs sql and refuse questions, with a per-run cap of questions x 4 and no fallback
+  provider for that command only.
 - **No authentication in local development.** Per the MCP authorization spec (2026-07-28),
   authorization is OPTIONAL, and HTTP-based servers that offer it follow OAuth 2.1 (the server is a
   resource server publishing OAuth 2.0 Protected Resource Metadata, RFC 9728, and accepting only

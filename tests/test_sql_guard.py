@@ -226,3 +226,19 @@ def test_the_sql_that_runs_is_regenerated_without_comments() -> None:
     assert checked.sql == "SELECT 1 LIMIT 100"
     tricky = check_query("SELECT 1 FROM uls_hd -- */ ; DROP TABLE uls_hd\n")
     assert tricky.sql == "SELECT 1 FROM uls_hd LIMIT 100"  # no comment text survives at all
+
+
+def test_fetch_sql_asks_for_one_extra_row_so_truncation_can_be_seen() -> None:
+    added = check_query("SELECT * FROM uls_hd")
+    assert added.sql.endswith("LIMIT 100") and added.fetch_sql.endswith("LIMIT 101")
+    assert added.limit == 100
+    explicit = check_query("SELECT * FROM uls_hd LIMIT 3")
+    assert explicit.sql.endswith("LIMIT 3") and explicit.fetch_sql.endswith("LIMIT 4")
+    lowered = check_query("SELECT * FROM uls_hd LIMIT ALL")
+    assert lowered.sql.endswith("LIMIT 1000") and lowered.fetch_sql.endswith("LIMIT 1001")
+    paged = check_query("SELECT * FROM uls_hd ORDER BY usi LIMIT 20 OFFSET 40")
+    assert "LIMIT 21" in paged.fetch_sql and "OFFSET 40" in paged.fetch_sql
+    assert "LIMIT 20" in paged.sql and "LIMIT 21" not in paged.sql
+    union = check_query("SELECT usi FROM uls_hd UNION ALL SELECT usi FROM uls_fr")
+    assert union.sql.endswith("LIMIT 100") and union.fetch_sql.endswith("LIMIT 101")
+    assert check_query("SELECT 1", default_limit=7, max_limit=50).fetch_sql.endswith("LIMIT 8")

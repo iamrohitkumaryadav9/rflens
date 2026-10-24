@@ -173,6 +173,16 @@ class LlmSettings(BaseSettings):
         return [p.strip() for p in self.llm_fallback.split(",") if p.strip()]
 
 
+class AgentSettings(BaseSettings):
+    """Agents reach data only through MCP servers; this is where sql-mcp is (env: SQL_MCP_URL).
+    AGENT_MAX_OUTPUT_TOKENS bounds one generation of the SQL agent (thinking tokens included)."""
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    sql_mcp_url: str = "http://127.0.0.1:8102/mcp"
+    agent_max_output_tokens: int = 800
+
+
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
@@ -196,3 +206,7 @@ def get_sql_mcp_settings() -> SqlMcpSettings:
 
 def get_llm_settings() -> LlmSettings:
     return LlmSettings()
+
+
+def get_agent_settings() -> AgentSettings:
+    return AgentSettings()

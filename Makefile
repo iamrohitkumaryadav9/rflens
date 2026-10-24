@@ -1,4 +1,4 @@
-.PHONY: up down migrate test-db test lint run load-secom load-uls load-fcc-eas fetch-3gpp chunk-3gpp embed-3gpp eval-smoke docs-mcp sql-mcp llm-spend
+.PHONY: up down migrate test-db test lint run load-secom load-uls load-fcc-eas fetch-3gpp chunk-3gpp embed-3gpp eval-smoke docs-mcp sql-mcp llm-spend golden-refresh eval-sql
 
 up:
 	docker compose up -d --wait
@@ -56,3 +56,12 @@ llm-spend:
 
 run:
 	uv run uvicorn rflens.api.main:app --host 127.0.0.1 --port 8000
+
+# Store each sql golden question's reference result (needs a running sql-mcp: make sql-mcp).
+golden-refresh:
+	uv run python -m rflens.eval.golden
+
+# SQL agent on the golden sql + refuse questions. PAID: needs LLM_ALLOW_PAID=true and a running
+# sql-mcp. DRY=1 prints the plan and the worst-case cost and makes no LLM call.
+eval-sql:
+	uv run python -m rflens.eval.eval_sql $(if $(DRY),--dry-run)

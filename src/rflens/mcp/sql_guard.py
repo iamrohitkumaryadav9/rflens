@@ -86,7 +86,8 @@ class Rejection(Exception):
 
 @dataclass(frozen=True)
 class CheckedQuery:
-    sql: str  # the SQL to run: regenerated from the parse tree, with the final LIMIT
+    sql: str  # regenerated from the parse tree, with the final LIMIT n (what the caller is shown)
+    fetch_sql: str  # the same with LIMIT n + 1: what runs, so "more rows existed" can be seen
     limit: int
     notice: str | None  # set when a LIMIT was added or lowered
 
@@ -191,6 +192,7 @@ def check_query(sql: str, default_limit: int = 100, max_limit: int = 1000) -> Ch
     _check_functions(root)
     limit, notice = _apply_limit(root, default_limit, max_limit)
     # comments=False: sqlglot would otherwise carry comments into the SQL that runs.
-    return CheckedQuery(
-        sql=root.sql(dialect="postgres", comments=False), limit=limit, notice=notice
-    )
+    sql = root.sql(dialect="postgres", comments=False)
+    root.args["limit"].set("expression", exp.Literal.number(limit + 1))
+    fetch_sql = root.sql(dialect="postgres", comments=False)
+    return CheckedQuery(sql=sql, fetch_sql=fetch_sql, limit=limit, notice=notice)

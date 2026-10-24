@@ -2,8 +2,8 @@
 # Output prices include thinking tokens (Google bills them as output).
 #
 # Source: https://ai.google.dev/gemini-api/docs/pricing
-# Page "Last updated 2026-10-22 UTC"; the standard prices were confirmed by the project owner on
-# that page, as were the gemini-3.1-flash-lite flex prices.
+# Page "Last updated 2026-10-22 UTC"; every price below was confirmed by the project owner on that
+# page.
 # Check the page again when it changes, and update `retrieved` with the new date.
 retrieved: 2026-10-22
 source_url: https://ai.google.dev/gemini-api/docs/pricing
@@ -16,6 +16,5 @@ providers:
       flex: {input: 0.125, output: 0.75}
     gemini-3.5-flash-lite:
       standard: {input: 0.30, output: 2.50}
-      # Derived, not read from a table: the flex page says flex is billed at 50% of standard.
-      flex: {input: 0.15, output: 1.25}
+      flex: {input: 0.15, output: 1.25}  # confirmed on the pricing page by the project owner
   # ollama runs locally and costs nothing: no entry, the gateway records zero.

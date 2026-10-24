@@ -115,9 +115,14 @@ class QueryResponse(BaseModel):
     columns: list[str]
     rows: list[list[Any]]
     row_count: int
-    truncated: bool = Field(description="true when the row limit was reached; more rows may exist")
+    truncated: bool = Field(
+        description="true only when more rows existed than were returned (the limit cut the result)"
+    )
     limit: int
-    executed_sql: str = Field(description="the SQL actually run (normalised, with the LIMIT)")
+    executed_sql: str = Field(
+        description="the query as limited (normalised, with the LIMIT); it runs with LIMIT + 1 "
+        "so that `truncated` can be exact, and only `limit` rows are returned"
+    )
     plan_cost: float = Field(description="planner cost estimate (rejected above the threshold)")
     duration_ms: int
     notice: str | None
@@ -351,7 +356,7 @@ def create_sql_server(
                 )
                 # exec_driver_sql: the executed text may hold '%' and ':' that text() would parse.
                 plan = conn.exec_driver_sql(
-                    "EXPLAIN (FORMAT JSON) " + checked.sql.replace("%", "%%")
+                    "EXPLAIN (FORMAT JSON) " + checked.fetch_sql.replace("%", "%%")
                 ).scalar_one()
                 cost = float(plan[0]["Plan"]["Total Cost"])
                 if cost > cfg.sql_max_cost:
@@ -362,9 +367,10 @@ def create_sql_server(
                         "key columns (ULS: service and usi)",
                         cost,
                     )
-                result = conn.exec_driver_sql(checked.sql.replace("%", "%%"))
+                # LIMIT n + 1 is what runs: getting n + 1 rows back is how we know there were more.
+                result = conn.exec_driver_sql(checked.fetch_sql.replace("%", "%%"))
                 columns = list(result.keys())
-                fetched = result.fetchmany(checked.limit)
+                fetched = result.fetchmany(checked.limit + 1)
         except ToolError:
             raise
         except DBAPIError as e:
@@ -384,7 +390,8 @@ def create_sql_server(
             )
             raise ToolError(f"query failed ({reason}): {message}") from e
 
-        rows = [[_jsonable(v) for v in row] for row in fetched]
+        truncated = len(fetched) > checked.limit  # an extra row existed beyond the limit
+        rows = [[_jsonable(v) for v in row] for row in fetched[: checked.limit]]
         duration = elapsed_ms()
         log.write(
             "run_query",
@@ -399,7 +406,7 @@ def create_sql_server(
             columns=columns,
             rows=rows,
             row_count=len(rows),
-            truncated=len(rows) >= checked.limit,
+            truncated=truncated,
             limit=checked.limit,
             executed_sql=checked.sql,
             plan_cost=cost,

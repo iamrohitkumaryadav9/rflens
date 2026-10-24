@@ -607,6 +607,37 @@ def test_a_query_cannot_change_data_even_if_the_guard_were_bypassed(reader_engin
         assert_denied(reader_engine, statement)
 
 
+SERIES = (
+    "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < {top}) "
+    "SELECT n FROM r"
+)
+
+
+@pytest.mark.parametrize(
+    ("top", "tail", "returned", "truncated"),
+    [
+        (3, " LIMIT 3", 3, False),  # explicit LIMIT equal to the row count: nothing was cut
+        (2, " LIMIT 3", 2, False),  # fewer rows than the LIMIT
+        (4, " LIMIT 3", 3, True),  # one more row than the LIMIT existed
+        (100, "", 100, False),  # guard-applied default limit, exactly 100 rows exist
+        (101, "", 100, True),  # guard-applied limit cuts a larger result
+        (5000, "", 100, True),
+        (1000, " LIMIT 5000", 1000, False),  # lowered to the maximum; exactly 1000 exist
+        (1001, " LIMIT 5000", 1000, True),
+    ],
+)
+def test_truncated_means_more_rows_existed_than_were_returned(
+    server, tag, top: int, tail: str, returned: int, truncated: bool
+) -> None:
+    out = data(call(server, "run_query", {"sql": SERIES.format(top=top) + tail, "question": tag}))
+    assert out["row_count"] == len(out["rows"]) == returned
+    assert out["truncated"] is truncated
+    assert out["rows"][0] == [1] and out["rows"][-1] == [returned]  # the first rows, in order
+    assert f"LIMIT {out['limit'] + 1}" not in out["executed_sql"]  # the probe row is not shown
+    (row,) = log_rows(tag)
+    assert row.row_count == returned  # the log counts rows returned, not the probe row
+
+
 # --- the HTTP layer (same options as `make sql-mcp`), without opening a port ----------------------
 
 
