@@ -6,6 +6,12 @@ RFLens is an agentic data platform that lets a wireless engineer ask plain-Engli
 
 Python 3.12, uv for dependencies, FastAPI, Postgres 16 + pgvector, SQLAlchemy 2 + Alembic, pytest, ruff.
 
+## Repository and CI
+
+The repo has a GitHub remote (`origin`, https://github.com/iamrohitkumaryadav9/rflens.git) and
+CI (`.github/workflows/ci.yml`) is green on `main`. Treat CI as working; do not report it as
+unrun. The user reviews and commits; do not commit unless asked.
+
 ## Repo layout
 
 The repo root is the project root (no nested rflens/ folder).
@@ -15,7 +21,11 @@ src/rflens/__init__.py
 src/rflens/config.py      # pydantic-settings, reads .env
 src/rflens/db.py          # SQLAlchemy engine + session
 src/rflens/api/main.py    # FastAPI app, GET /health
-src/rflens/ingest/        # secom.py (UCI SECOM), uls.py (FCC ULS, one service per run), fcc_eas.py (FCC grantees, test firms)
+src/rflens/ingest/        # secom.py (UCI SECOM), uls.py (FCC ULS, one service per run), fcc_eas.py (FCC grantees, test firms),
+                          # spec_fetch.py + spec_chunker.py (3GPP specs -> data/interim/3gpp/<spec>/chunks.jsonl)
+src/rflens/retrieval/     # embedder.py (Ollama), index.py (load + embed chunks), hybrid.py
+                          # (vector + keyword + RRF), embed_3gpp.py, eval_smoke.py
+eval/                     # smoke_3gpp.yaml (provisional questions)
 migrations/               # Alembic
 tests/                    # tests/fixtures/uls: small real ULS subset, committed
 docs/blueprint.pdf
@@ -27,6 +37,52 @@ data/                     # gitignored; raw downloads (data/raw/secom, data/raw/
 - `data_sources.row_count` is the count of the source's primary entity: runs for `uci_secom`,
   licences (`uls_hd` rows) for `uls_<service>`. Per-table counts live elsewhere (for ULS,
   `uls_file_counts`, which also records the zip's `sha256` and `snapshot_date`).
+
+- 3GPP specs are copyrighted (3GPP terms of use: no reproduction or distribution without ETSI's
+  consent). Raw files, converted Markdown and chunks live only under gitignored `data/` (and later
+  in the local database); nothing from 3GPP is committed. Test fixtures for the spec parser are
+  synthetic, hand-written Markdown. Golden-set questions cite clause numbers, never quoted spec
+  text. Specs in use: TS 36.101 19.6.0 and TS 38.101-1 19.7.0 (Release 19); no FR2 for now.
+- Spec chunk sizes are config (`ChunkSettings` in `config.py`) and apply to the embedding `text`;
+  `raw_text` keeps the original Markdown or HTML. Env: `CHUNK_SOFT_CHARS` 3000,
+  `CHUNK_HARD_CHARS` 6000, `CHUNK_TABLE_HARD_CHARS` 3600, `CHUNK_MAX_TOKENS` 1840. To be tuned
+  later against recall@5.
+- **Token rule (measured, not guessed).** nomic-embed-text has a hard 2,048-token context under
+  Ollama (`num_ctx` is clamped). Characters alone cannot respect it: a character cap calibrated on
+  clause 6 tables (about 2.4 chars/token) failed on carrier-aggregation tables. Measured with
+  Ollama on 170 table chunks (85 densest by the estimator, 85 random, all over 2,800 chars):
+  chars/token min 1.28, 5th percentile 1.51, median 1.81 (dense group median 1.65, random group
+  2.28); 66 of 170 overflowed (up to about 2,750 tokens) and 94 were over 1,840. Dense tables are
+  band-combination and CA tables, mainly clauses 6.2.5, 7.3.1, 5.5A.3.x, 5.5B, 6.2A.4.2.x and
+  5.2A.2.x. Rule: `estimate_tokens()` in `ingest/spec_chunker.py` (letter runs and digit runs
+  count as word pieces, each punctuation mark as one token, times `TOKEN_SCALE` 1.20) and no
+  chunk may estimate above `CHUNK_MAX_TOKENS`; tables are split by row groups on that estimate,
+  in addition to the character caps. The raw estimate is within 0.87 to 1.145 of the real count;
+  1.20 made the estimate at or above the real count for all 170 calibration chunks (est/real 1.05
+  to 1.38) and for 103 later re-checked chunks, and the largest of those re-checked chunks is
+  1,638 real tokens. A lower character cap alone was rejected: it needed 2,000 chars to reach zero
+  estimated overflows, adding 1,030 chunks (+15%) with 32 mid-row forced splits, against +130
+  chunks (+1.9%) and no forced splits for the token rule. If the model, prefix or tokenizer
+  changes, re-measure and recalibrate `TOKEN_SCALE`.
+- The embedder stores each chunk's real token count (`prompt_eval_count`) in
+  `chunks.metadata.tokens` and prints the max and the number of chunks above 1,840 after every
+  embed run, so the full embed doubles as the complete measurement. A chunk embedded without a
+  token count is embedded again. Any chunk above 1,840 real tokens means recalibrate.
+- Embeddings: Ollama's HTTP API (`nomic-embed-text`, 768 dimensions), never torch. Chunks are sent
+  with the `search_document: ` prefix and queries with `search_query: ` (both defined once in
+  `retrieval/embedder.py`); every request sends `truncate=false`, so an over-long input stops the
+  run naming the chunk instead of being cut silently. `chunks.embedding_model` holds tag plus
+  digest (e.g. `nomic-embed-text:latest@0a109f422b47`); a chunk embedded by a different model
+  counts as not embedded. The full embed (~3 h on this CPU-only machine) is run by the user
+  from their own terminal: `make embed-3gpp` (resumable; `SPEC=`, `CLAUSE=`, `LIMIT=` for subsets).
+- Full-text search: `chunks.tsv` is generated from `rflens_fts_norm(text)` with the `english`
+  config; queries must use the same function. `rflens_fts_norm` splits glued units ("23dBm",
+  "dBm/15kHz"). Keyword queries OR the significant terms and rank with `ts_rank_cd`; hybrid
+  search merges vector and keyword top-k by reciprocal rank fusion (k=60, `RRF_K`). A table piece
+  whose notes live in their own chunk carries the pointer "Notes for this table are in chunk X";
+  search results expose X in `related_chunks`.
+- `eval/smoke_3gpp.yaml` is PROVISIONAL (ten assistant-written questions, expected clauses not
+  human-reviewed). `make eval-smoke` reports recall@5 for vector, keyword and hybrid.
 
 ## Open data questions
 

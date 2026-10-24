@@ -9,4 +9,5 @@ Status: scaffold only (Postgres 16 + pgvector, FastAPI `/health`, Alembic).
 Quickstart (needs Docker, uv, make):
 `cp .env.example .env` (PowerShell: `Copy-Item .env.example .env`), then `uv sync`, `make up`, `make migrate`, `make test`, `make run`.
 `make up` must be running (and `make migrate` applied) before `make test`; the tests use the real Postgres.
+3GPP specs are copyrighted: run `make fetch-3gpp` then `make chunk-3gpp` to build the corpus locally; nothing from 3GPP is in this repo.
 Check: `curl localhost:8000/health` returns `{"status":"ok","pgvector":true}`.
