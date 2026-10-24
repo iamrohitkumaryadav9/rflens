@@ -1,7 +1,9 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import URL, make_url
 
 
 class Settings(BaseSettings):
@@ -39,7 +41,7 @@ class ChunkSettings(BaseSettings):
 
 class RetrievalSettings(BaseSettings):
     """Embedding and search settings (env: OLLAMA_BASE_URL, EMBED_MODEL, EMBED_BATCH_SIZE,
-    RRF_K, SEARCH_CANDIDATES)."""
+    RRF_K, SEARCH_CANDIDATES, RETRIEVAL_MODE)."""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -48,6 +50,30 @@ class RetrievalSettings(BaseSettings):
     embed_batch_size: int = 8
     rrf_k: int = 60
     search_candidates: int = 50
+    # Default search mode when the caller does not pick one. INTERIM: vector, from the smoke-eval
+    # diagnosis (the keyword leg is length-biased and adds noise to hybrid); revisit with the
+    # week 3 golden set.
+    retrieval_mode: Literal["vector", "keyword", "hybrid"] = "vector"
+
+
+class DocsReaderSettings(BaseSettings):
+    """docs-mcp: the read-only database role it connects as, and where it listens.
+
+    Env: DOCS_READER_PASSWORD (required; also read by migration 0007 when it creates the role),
+    DOCS_READER_USER, DOCS_MCP_HOST, DOCS_MCP_PORT.
+    """
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    docs_reader_password: str
+    docs_reader_user: str = "rflens_docs_reader"
+    docs_mcp_host: str = "127.0.0.1"
+    docs_mcp_port: int = 8101
+
+    def database_url(self) -> URL:
+        """DATABASE_URL with the user and password swapped for the read-only role."""
+        base = make_url(get_settings().database_url)
+        return base.set(username=self.docs_reader_user, password=self.docs_reader_password)
 
 
 @lru_cache
@@ -61,3 +87,7 @@ def get_chunk_settings() -> ChunkSettings:
 
 def get_retrieval_settings() -> RetrievalSettings:
     return RetrievalSettings()
+
+
+def get_docs_reader_settings() -> DocsReaderSettings:
+    return DocsReaderSettings()

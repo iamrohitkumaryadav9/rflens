@@ -35,6 +35,7 @@ class Hit:
     chunk_id: str
     score: float  # cosine similarity, ts_rank_cd, or the RRF score, depending on the mode
     spec: str
+    version: str
     clause: str
     clause_title: str | None
     kind: str
@@ -106,15 +107,17 @@ def search(
     embedder: Embedder,
     query: str,
     *,
-    mode: str = "hybrid",
+    mode: str | None = None,
     top_k: int = 5,
     candidates: int | None = None,
     rrf_k: int | None = None,
     spec: str | None = None,
 ) -> list[Hit]:
+    """Search the chunks. `mode` defaults to the configured RETRIEVAL_MODE (interim: vector)."""
+    settings = get_retrieval_settings()
+    mode = mode or settings.retrieval_mode
     if mode not in MODES:
         raise ValueError(f"mode must be one of {MODES}")
-    settings = get_retrieval_settings()
     candidates = candidates or settings.search_candidates
     rrf_k = rrf_k or settings.rrf_k
     vec = vector_search(conn, embedder, query, k=candidates, spec=spec) if mode != "keyword" else []
@@ -136,8 +139,8 @@ def search(
         for r in conn.execute(
             text(
                 """
-                SELECT c.chunk_id, d.spec, c.clause, c.clause_title, c.kind, c.table_number,
-                       c.caption, c.table_part, c.text, c.metadata
+                SELECT c.chunk_id, d.spec, d.version, c.clause, c.clause_title, c.kind,
+                       c.table_number, c.caption, c.table_part, c.text, c.metadata
                 FROM chunks c JOIN documents d ON d.id = c.document_id
                 WHERE c.chunk_id = ANY(CAST(:ids AS text[]))
                 """
@@ -147,7 +150,8 @@ def search(
     }
     return [
         Hit(
-            chunk_id=cid, score=score, spec=rows[cid].spec, clause=rows[cid].clause,
+            chunk_id=cid, score=score, spec=rows[cid].spec, version=rows[cid].version,
+            clause=rows[cid].clause,
             clause_title=rows[cid].clause_title, kind=rows[cid].kind,
             table_number=rows[cid].table_number, caption=rows[cid].caption,
             table_part=rows[cid].table_part, text=rows[cid].text,

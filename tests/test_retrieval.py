@@ -410,7 +410,28 @@ def test_hybrid_search_finds_the_table_in_all_modes(conn: Connection) -> None:
     assert top.vector_rank is not None and top.keyword_rank is not None
     assert top.score == pytest.approx(1 / (60 + top.vector_rank) + 1 / (60 + top.keyword_rank))
     # RRF k is configurable
-    assert search(conn, emb, query, top_k=1, rrf_k=1, spec=SPEC)[0].score > top.score
+    assert search(conn, emb, query, mode="hybrid", top_k=1, rrf_k=1, spec=SPEC)[0].score > top.score
+
+
+def test_default_search_mode_is_vector_and_comes_from_config(
+    conn: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ids = load_all(conn)
+    emb = HashEmbedder()
+    embed_pending(conn, emb, ids, progress=lambda s: None)
+    monkeypatch.delenv("RETRIEVAL_MODE", raising=False)
+    default = search(conn, emb, "widget x2", top_k=3, spec=SPEC)  # no mode given
+    vector = search(conn, emb, "widget x2", mode="vector", top_k=3, spec=SPEC)
+    assert [h.chunk_id for h in default] == [h.chunk_id for h in vector]
+    assert default[0].vector_rank == 1 and default[0].keyword_rank is None  # only the vector leg
+    monkeypatch.setenv("RETRIEVAL_MODE", "keyword")
+    kw = search(conn, emb, "widget x2", top_k=3, spec=SPEC)
+    assert kw[0].vector_rank is None and kw[0].keyword_rank == 1
+    monkeypatch.setenv("RETRIEVAL_MODE", "hybrid")
+    assert search(conn, emb, "widget x2", top_k=3, spec=SPEC)[0].keyword_rank is not None
+    monkeypatch.setenv("RETRIEVAL_MODE", "nonsense")
+    with pytest.raises(ValueError):
+        search(conn, emb, "widget x2", spec=SPEC)
 
 
 def test_vector_search_ignores_chunks_from_other_models(conn: Connection) -> None:
@@ -462,7 +483,8 @@ def test_smoke_eval_file_is_reviewed_and_well_formed() -> None:
 def test_smoke_eval_hit_rule_is_exact_clause_not_prefix() -> None:
     q = Question("a", SPEC, "x", ("6.2.3",), ())
     hit = Hit(
-        chunk_id="c", score=1.0, spec=SPEC, clause="6.2.3.5", clause_title=None, kind="text",
+        chunk_id="c", score=1.0, spec=SPEC, version="19.0.0", clause="6.2.3.5",
+        clause_title=None, kind="text",
         table_number=None, caption=None, table_part=None, text="", related_chunks=[],
     )
     assert not is_hit(q, hit)  # a sub-clause does not count for its parent clause

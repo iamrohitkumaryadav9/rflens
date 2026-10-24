@@ -23,6 +23,7 @@ jobs:
           --health-retries 20
     env:
       DATABASE_URL: postgresql+psycopg://rflens:rflens@localhost:5432/rflens
+      DOCS_READER_PASSWORD: ci-only-docs-reader-password
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6

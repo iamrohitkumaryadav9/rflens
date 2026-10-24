@@ -1,4 +1,4 @@
-.PHONY: up down migrate test lint run load-secom load-uls load-fcc-eas fetch-3gpp chunk-3gpp embed-3gpp eval-smoke
+.PHONY: up down migrate test lint run load-secom load-uls load-fcc-eas fetch-3gpp chunk-3gpp embed-3gpp eval-smoke docs-mcp
 
 up:
 	docker compose up -d --wait
@@ -38,6 +38,9 @@ embed-3gpp:
 # question search only its own spec.
 eval-smoke:
 	uv run python -m rflens.retrieval.eval_smoke $(if $(SPEC),--spec $(SPEC)) $(if $(FILTER_SPEC),--filter-spec)
+
+docs-mcp:
+	uv run python -m rflens.mcp.docs_server
 
 run:
 	uv run uvicorn rflens.api.main:app --host 127.0.0.1 --port 8000

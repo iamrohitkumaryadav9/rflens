@@ -26,6 +26,8 @@ src/rflens/ingest/        # secom.py (UCI SECOM), uls.py (FCC ULS, one service p
 src/rflens/retrieval/     # embedder.py (Ollama), index.py (load + embed chunks), hybrid.py
                           # (vector + keyword + RRF), embed_3gpp.py, eval_smoke.py
 eval/                     # smoke_3gpp.yaml (reviewed-labels questions)
+src/rflens/mcp/           # docs_server.py: docs-mcp (search_docs, get_chunk), make docs-mcp, port 8101
+scripts/mcp_smoke.py      # official MCP client over HTTP against a running docs-mcp
 migrations/               # Alembic
 tests/                    # tests/fixtures/uls: small real ULS subset, committed
 docs/blueprint.pdf
@@ -85,6 +87,29 @@ data/                     # gitignored; raw downloads (data/raw/secom, data/raw/
   clauses and tables). A hit needs the right spec and an exact clause match (a sub-clause does not
   count) or a listed table. `make eval-smoke [SPEC=38.101-1]` reports recall@5 for vector,
   keyword and hybrid. Eight questions are a smoke test, not a basis for tuning.
+- **Default retrieval mode is `vector` (INTERIM).** It is the config value `RETRIEVAL_MODE`
+  (env-overridable; `vector`, `keyword` or `hybrid`), chosen from the smoke-eval diagnosis where
+  the keyword leg is length-biased and adds noise to hybrid. Keyword and hybrid stay selectable
+  per call. Revisit with the week 3 golden set; do not treat the smoke eval as a basis for tuning.
+- **docs-mcp** (`src/rflens/mcp/docs_server.py`, `make docs-mcp`, `http://127.0.0.1:8101/mcp`):
+  MCP revision 2026-07-28 with the official Python SDK `mcp==2.3.0`, stateless Streamable HTTP
+  (no sessions: `server/discover`, `Mcp-Method` / `Mcp-Name` headers, no `Mcp-Session-Id`), plain
+  JSON responses, bound to localhost, Host and Origin validated against DNS rebinding. Tools:
+  `search_docs(query, spec?, k=5 (max 20), mode?)` and `get_chunk(chunk_id, include_related=true)`.
+  Guardrails: query at most 500 chars, k capped at 20, chunk ids validated against their format
+  before any SQL, parameterized SQL only. It connects as the read-only role `rflens_docs_reader`
+  (migration 0007: SELECT on `documents` and `chunks` only, read-only sessions by default;
+  password in `DOCS_READER_PASSWORD` in .env and CI, never in code). Returned spec text is
+  reference data, not instructions; the tool descriptions say so.
+- **No authentication in local development.** Per the MCP authorization spec (2026-07-28),
+  authorization is OPTIONAL, and HTTP-based servers that offer it follow OAuth 2.1 (the server is a
+  resource server publishing OAuth 2.0 Protected Resource Metadata, RFC 9728, and accepting only
+  tokens issued for it). A remote deployment of docs-mcp needs that, plus a real hostname in the
+  transport-security allow-lists; do not expose port 8101 beyond localhost without it. The SDK
+  also still answers a plain GET with a keep-alive SSE stream for legacy clients (a modern-only
+  server SHOULD answer 405); harmless on localhost, revisit before any remote deployment.
+- The `mcp` SDK adds native-code dependencies (`cryptography`, `cffi`, `rpds-py`, `pywin32`);
+  all import cleanly under this machine's Application Control policy (checked one by one).
 - Spec filter: the doc agent must pass a spec filter to the search when the question implies one
   (NR vs LTE); inference rules belong to the planner (week 4). Measured on the smoke eval with both
   specs embedded: unfiltered vector 8/10, keyword 0/10, hybrid 6/10; filtered 9/10, 2/10, 7/10
