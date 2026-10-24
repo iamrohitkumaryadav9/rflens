@@ -1,13 +1,14 @@
 # Smoke eval for 3GPP retrieval (make eval-smoke).
 #
-# PROVISIONAL: ten questions written by the assistant from the structure of the specs, with the
-# expected clause or table numbers NOT yet reviewed by a human. Treat recall numbers from this
-# file as a sanity check, not as a result. Questions cite clause numbers only; no spec text is
-# quoted here (3GPP specs are copyrighted).
+# Ten questions drafted by the assistant from the structure of the specs. The expected clauses
+# and tables of q01-q10 were reviewed by a human (reviewed-labels); the questions are still a
+# small smoke set, so treat recall numbers as a sanity check, not as a result. Questions cite
+# clause numbers only; no spec text is quoted here (3GPP specs are copyrighted).
 #
-# A question is answered if any of the top 5 chunks is from `spec` and has a clause listed in
-# `expected_clauses` or a table number listed in `expected_tables`.
-status: provisional
+# A question is answered if any of the top 5 chunks is from `spec` and its clause is exactly one
+# of `expected_clauses` (a sub-clause such as 6.2.3.5 does not count for 6.2.3) or its table
+# number is listed in `expected_tables`.
+status: reviewed-labels
 questions:
   - id: q01
     spec: "38.101-1"
@@ -41,7 +42,7 @@ questions:
     expected_tables: []
   - id: q07
     spec: "38.101-1"
-    question: "What reference sensitivity power level must an NR UE meet?"
+    question: "What is the reference sensitivity level for band n78 with a 20 MHz channel bandwidth?"
     expected_clauses: ["7.3.2"]
     expected_tables: []
   - id: q08

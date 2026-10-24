@@ -34,8 +34,9 @@ chunk-3gpp:
 embed-3gpp:
 	uv run python -m rflens.retrieval.embed_3gpp $(if $(SPEC),--spec $(SPEC)) $(if $(CLAUSE),--clause $(CLAUSE)) $(if $(LIMIT),--limit $(LIMIT))
 
+# Optional: SPEC=38.101-1 limits the eval to that spec's questions.
 eval-smoke:
-	uv run python -m rflens.retrieval.eval_smoke
+	uv run python -m rflens.retrieval.eval_smoke $(if $(SPEC),--spec $(SPEC))
 
 run:
 	uv run uvicorn rflens.api.main:app --host 127.0.0.1 --port 8000

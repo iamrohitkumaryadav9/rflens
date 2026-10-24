@@ -25,7 +25,7 @@ src/rflens/ingest/        # secom.py (UCI SECOM), uls.py (FCC ULS, one service p
                           # spec_fetch.py + spec_chunker.py (3GPP specs -> data/interim/3gpp/<spec>/chunks.jsonl)
 src/rflens/retrieval/     # embedder.py (Ollama), index.py (load + embed chunks), hybrid.py
                           # (vector + keyword + RRF), embed_3gpp.py, eval_smoke.py
-eval/                     # smoke_3gpp.yaml (provisional questions)
+eval/                     # smoke_3gpp.yaml (reviewed-labels questions)
 migrations/               # Alembic
 tests/                    # tests/fixtures/uls: small real ULS subset, committed
 docs/blueprint.pdf
@@ -81,8 +81,19 @@ data/                     # gitignored; raw downloads (data/raw/secom, data/raw/
   search merges vector and keyword top-k by reciprocal rank fusion (k=60, `RRF_K`). A table piece
   whose notes live in their own chunk carries the pointer "Notes for this table are in chunk X";
   search results expose X in `related_chunks`.
-- `eval/smoke_3gpp.yaml` is PROVISIONAL (ten assistant-written questions, expected clauses not
-  human-reviewed). `make eval-smoke` reports recall@5 for vector, keyword and hybrid.
+- `eval/smoke_3gpp.yaml`: ten questions, status `reviewed-labels` (a human reviewed the expected
+  clauses and tables). A hit needs the right spec and an exact clause match (a sub-clause does not
+  count) or a listed table. `make eval-smoke [SPEC=38.101-1]` reports recall@5 for vector,
+  keyword and hybrid. Eight questions are a smoke test, not a basis for tuning.
+- Retrieval diagnosis on the 8 questions about 38.101-1 (full embed, 2,502 chunks): vector 7/8,
+  keyword 2/8, hybrid 5/8. No code defect was found: the HNSW leg equals an exact scan, each leg
+  passes 50 candidates into RRF (deeper is worse: depth 20/50/100/200 gives hybrid 6/5/4/3 of 8),
+  every expected clause exists, and tokenization of identifiers such as NS_04 and n78 is the same
+  on the document and query side. What drives the misses is the keyword leg: the OR of the
+  question's terms matches 60-90% of all chunks, `ts_rank_cd` (flags 0) has no length
+  normalization and no term rarity weighting, so its top results are long tables (median 2,600-3,300
+  chars against a corpus median of 718), and equal-weight RRF rewards presence in both lists over a
+  rank-2 hit in one. Tuning options were measured but are NOT applied (see the task report).
 
 ## Open data questions
 

@@ -1,7 +1,8 @@
 """Smoke eval: recall@5 of vector-only, keyword-only and hybrid search (make eval-smoke).
 
-Questions come from eval/smoke_3gpp.yaml (provisional). Run it after the full embed; with a
-partial embed the numbers mean little and a warning says so.
+Questions come from eval/smoke_3gpp.yaml (expected clauses reviewed by a human). Run it after
+the full embed; with a partial embed the numbers mean little and a warning says so. A hit needs
+the right spec and an exactly matching clause (a sub-clause does not count) or listed table.
 """
 
 import argparse
@@ -26,6 +27,10 @@ class Question:
     question: str
     expected_clauses: tuple[str, ...]
     expected_tables: tuple[str, ...]
+
+
+def load_status(path: Path) -> str:
+    return str(yaml.safe_load(path.read_text("utf-8")).get("status", "unknown"))
 
 
 def load_questions(path: Path) -> list[Question]:
@@ -65,11 +70,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Recall@5 smoke eval for 3GPP retrieval")
     parser.add_argument("--file", type=Path, default=DEFAULT_FILE)
     parser.add_argument("--top-k", type=int, default=5)
+    parser.add_argument("--spec", help="only the questions about this spec, e.g. 38.101-1")
     args = parser.parse_args()
 
     settings = get_retrieval_settings()
     embedder = OllamaEmbedder(settings.ollama_base_url, settings.embed_model)
-    questions = load_questions(args.file)
+    questions = [q for q in load_questions(args.file) if args.spec in (None, q.spec)]
     with get_engine().connect() as conn:
         done, total = conn.execute(
             text(
@@ -81,7 +87,10 @@ def main() -> None:
         if not total or done < total:
             print("WARNING: not all chunks are embedded; recall numbers are not meaningful.")
         results = recall_at_k(conn, embedder, questions, k=args.top_k)
-    print(f"\nPROVISIONAL questions ({args.file.name}); hit rank within top {args.top_k}:")
+    print(
+        f"\n{args.file.name} (status: {load_status(args.file)}); "
+        f"hit rank within top {args.top_k}:"
+    )
     print(f"{'id':5} {'spec':9} " + " ".join(f"{m:>8}" for m in MODES) + "  question")
     for i, q in enumerate(questions):
         ranks = [results[m][i][1] for m in MODES]

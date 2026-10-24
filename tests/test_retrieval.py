@@ -24,8 +24,15 @@ from rflens.retrieval.embedder import (
     OllamaEmbedder,
     vector_literal,
 )
-from rflens.retrieval.eval_smoke import DEFAULT_FILE, Question, is_hit, load_questions, recall_at_k
-from rflens.retrieval.hybrid import keyword_search, rrf, search, vector_search
+from rflens.retrieval.eval_smoke import (
+    DEFAULT_FILE,
+    Question,
+    is_hit,
+    load_questions,
+    load_status,
+    recall_at_k,
+)
+from rflens.retrieval.hybrid import Hit, keyword_search, rrf, search, vector_search
 from rflens.retrieval.index import (
     embed_pending,
     load_chunks,
@@ -440,14 +447,27 @@ def test_split_table_hit_carries_the_notes_chunk_in_related_chunks(conn: Connect
 # --- smoke eval ---------------------------------------------------------------------------------
 
 
-def test_smoke_eval_file_is_provisional_and_well_formed() -> None:
-    data = DEFAULT_FILE.read_text("utf-8")
-    assert "status: provisional" in data
+def test_smoke_eval_file_is_reviewed_and_well_formed() -> None:
+    assert load_status(DEFAULT_FILE) == "reviewed-labels"
     questions = load_questions(DEFAULT_FILE)
     assert len(questions) == 10
     assert len({q.id for q in questions}) == 10
     assert {q.spec for q in questions} <= {"36.101", "38.101-1"}
     assert all(q.expected_clauses or q.expected_tables for q in questions)
+    q07 = next(q for q in questions if q.id == "q07")
+    assert "n78" in q07.question and "20 MHz" in q07.question
+    assert q07.expected_clauses == ("7.3.2",)
+
+
+def test_smoke_eval_hit_rule_is_exact_clause_not_prefix() -> None:
+    q = Question("a", SPEC, "x", ("6.2.3",), ())
+    hit = Hit(
+        chunk_id="c", score=1.0, spec=SPEC, clause="6.2.3.5", clause_title=None, kind="text",
+        table_number=None, caption=None, table_part=None, text="", related_chunks=[],
+    )
+    assert not is_hit(q, hit)  # a sub-clause does not count for its parent clause
+    assert is_hit(Question("a", SPEC, "x", ("6.2.3.5",), ()), hit)
+    assert not is_hit(Question("a", "other", "x", ("6.2.3.5",), ()), hit)  # the spec must match
 
 
 def test_smoke_eval_hit_rule_and_recall(conn: Connection) -> None:
