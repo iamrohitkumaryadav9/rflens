@@ -15,11 +15,46 @@ src/rflens/__init__.py
 src/rflens/config.py      # pydantic-settings, reads .env
 src/rflens/db.py          # SQLAlchemy engine + session
 src/rflens/api/main.py    # FastAPI app, GET /health
+src/rflens/ingest/        # secom.py (UCI SECOM), uls.py (FCC ULS, one service per run)
 migrations/               # Alembic
-tests/
+tests/                    # tests/fixtures/uls: small real ULS subset, committed
 docs/blueprint.pdf
-data/                     # gitignored; raw downloads go here later
+data/                     # gitignored; raw downloads (data/raw/secom, data/raw/uls/<service>)
 ```
+
+## Conventions
+
+- `data_sources.row_count` is the count of the source's primary entity: runs for `uci_secom`,
+  licences (`uls_hd` rows) for `uls_<service>`. Per-table counts live elsewhere (for ULS,
+  `uls_file_counts`, which also records the zip's `sha256` and `snapshot_date`).
+
+## Open data questions
+
+Unresolved facts about the loaded data. Do not guess answers; confirm from an FCC source.
+Details are for the `cell` service, snapshot complete/l_cell.zip dated 2026-10-18.
+
+- (a) Units of `uls_fr.power_erp`, `power_output` and `eirp` are not stated in the layout document
+  (v9.0). Frequency is assumed MHz (cellular values run 824-892). Columns are unitless.
+- (b) Meanings of the code values are not defined in the layout document: `license_status`
+  (A 3861, C 1122, E 371, T 110), `entity_type` (L, CL, O) and `class_station_code`
+  (almost always empty in cell). The ULS code-definitions document has not been found.
+- (c) 380 `uls_fr` rows (48 licences) have `power_erp <= 0`: 120 are `.000` and the rest negative
+  (down to -1035.0). Loaded as-is. Largest: usi 12443 (28 rows), 12679 (26), 13149 (26).
+- (d) Suspect coordinates in `uls_lo`:
+  - Data errors (stored as in the source, not corrected):
+    - usi 12510 (KNKA454), location 55, Vidor TX: source longitude `3 56 39.8 W`. Stored as
+      -3.944; a leading digit looks lost (Vidor is near 94 W).
+    - usi 11695 (KNKN718), location 1, PAGO PAGO: longitude `170 41 42.0 E`. Pago Pago is about
+      170 W, so the direction letter is wrong (E instead of W). Stored as +170.695.
+  - usi 12361 (KNKN792), location 33, LaFollette TN: latitude `36 73 11.3 N` has minutes 73, so
+    `latitude` is NULL and the load prints a warning.
+  - usi 13056, location 56: latitude seconds are empty, so `latitude` is NULL.
+  - 8 rows have seconds of exactly 60.0 (e.g. usi 11913 location 11). Accepted; the arithmetic is
+    exact.
+- (e) `uls_fr` has no unique natural key. Two groups repeat (usi, location, antenna, freq_seq_id), both
+  in usi 13401 (KNKN520): source lines 224503/224504 (same freq 869.04-879.99, power 140.820 vs
+  276.000) and 224505/224506 (different frequency bands, 824.04-834.99 and 890.01-891.48). The
+  primary key is (service, line_no).
 
 ## Working rules
 
