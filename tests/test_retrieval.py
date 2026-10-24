@@ -470,6 +470,25 @@ def test_smoke_eval_hit_rule_is_exact_clause_not_prefix() -> None:
     assert not is_hit(Question("a", "other", "x", ("6.2.3.5",), ()), hit)  # the spec must match
 
 
+def test_smoke_eval_spec_filter_keeps_another_spec_from_displacing_the_answer(
+    conn: Connection,
+) -> None:
+    ids = load_all(conn)
+    other = SpecSource("99.102", "99_series", "other.zip", "19.0.0", 19, "1" * 64)
+    flood = [
+        row(f"99.102@19.0.0/6.9/{i}", f"widget x2 widget x2 widget x2 flood{i}") for i in range(6)
+    ]
+    flood_ids = load_chunks(conn, other, flood, prune=True)
+    emb = HashEmbedder()
+    embed_pending(conn, emb, ids + flood_ids, progress=lambda s: None)
+    question = Question("a", SPEC, "widget x2", ("6.2.9",), ("6.2.1-1",))
+    unfiltered = recall_at_k(conn, emb, [question], k=5)
+    filtered = recall_at_k(conn, emb, [question], k=5, filter_spec=True)
+    for mode in ("vector", "keyword", "hybrid"):
+        assert unfiltered[mode][0][1] is None, mode  # the other spec fills the top 5
+        assert filtered[mode][0][1] is not None, mode  # only the question's own spec is searched
+
+
 def test_smoke_eval_hit_rule_and_recall(conn: Connection) -> None:
     ids = load_all(conn)
     emb = HashEmbedder()

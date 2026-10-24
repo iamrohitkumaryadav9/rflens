@@ -52,14 +52,26 @@ def is_hit(question: Question, hit: Hit) -> bool:
 
 
 def recall_at_k(
-    conn: Connection, embedder: Embedder, questions: list[Question], *, k: int = 5
+    conn: Connection,
+    embedder: Embedder,
+    questions: list[Question],
+    *,
+    k: int = 5,
+    filter_spec: bool = False,
 ) -> dict[str, list[tuple[Question, int | None]]]:
-    """Per mode, per question: the 1-based rank of the first matching hit in the top k, or None."""
+    """Per mode, per question: the 1-based rank of the first matching hit in the top k, or None.
+
+    With filter_spec each question's own spec is passed to the search as a filter; without it
+    the search runs over every spec (the default).
+    """
     results: dict[str, list[tuple[Question, int | None]]] = {}
     for mode in MODES:
         rows = []
         for q in questions:
-            hits = search(conn, embedder, q.question, mode=mode, top_k=k)
+            hits = search(
+                conn, embedder, q.question, mode=mode, top_k=k,
+                spec=q.spec if filter_spec else None,
+            )
             rank = next((i for i, h in enumerate(hits, start=1) if is_hit(q, h)), None)
             rows.append((q, rank))
         results[mode] = rows
@@ -71,6 +83,10 @@ def main() -> None:
     parser.add_argument("--file", type=Path, default=DEFAULT_FILE)
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--spec", help="only the questions about this spec, e.g. 38.101-1")
+    parser.add_argument(
+        "--filter-spec", action="store_true",
+        help="pass each question's spec to the search as a filter (default: search all specs)",
+    )
     args = parser.parse_args()
 
     settings = get_retrieval_settings()
@@ -86,9 +102,12 @@ def main() -> None:
         print(f"model {embedder.model_id}: {done}/{total} chunks embedded")
         if not total or done < total:
             print("WARNING: not all chunks are embedded; recall numbers are not meaningful.")
-        results = recall_at_k(conn, embedder, questions, k=args.top_k)
+        results = recall_at_k(
+            conn, embedder, questions, k=args.top_k, filter_spec=args.filter_spec
+        )
     print(
-        f"\n{args.file.name} (status: {load_status(args.file)}); "
+        f"\n{args.file.name} (status: {load_status(args.file)}); spec filter: "
+        f"{'ON (each question searches only its own spec)' if args.filter_spec else 'off'}; "
         f"hit rank within top {args.top_k}:"
     )
     print(f"{'id':5} {'spec':9} " + " ".join(f"{m:>8}" for m in MODES) + "  question")

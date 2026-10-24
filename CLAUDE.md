@@ -85,6 +85,10 @@ data/                     # gitignored; raw downloads (data/raw/secom, data/raw/
   clauses and tables). A hit needs the right spec and an exact clause match (a sub-clause does not
   count) or a listed table. `make eval-smoke [SPEC=38.101-1]` reports recall@5 for vector,
   keyword and hybrid. Eight questions are a smoke test, not a basis for tuning.
+- Spec filter: the doc agent must pass a spec filter to the search when the question implies one
+  (NR vs LTE); inference rules belong to the planner (week 4). Measured on the smoke eval with both
+  specs embedded: unfiltered vector 8/10, keyword 0/10, hybrid 6/10; filtered 9/10, 2/10, 7/10
+  (`make eval-smoke FILTER_SPEC=1`), because 36.101 has analogous clauses that displace NR answers.
 - Retrieval diagnosis on the 8 questions about 38.101-1 (full embed, 2,502 chunks): vector 7/8,
   keyword 2/8, hybrid 5/8. No code defect was found: the HNSW leg equals an exact scan, each leg
   passes 50 candidates into RRF (deeper is worse: depth 20/50/100/200 gives hybrid 6/5/4/3 of 8),
