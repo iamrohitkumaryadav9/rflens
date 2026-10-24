@@ -15,7 +15,7 @@ src/rflens/__init__.py
 src/rflens/config.py      # pydantic-settings, reads .env
 src/rflens/db.py          # SQLAlchemy engine + session
 src/rflens/api/main.py    # FastAPI app, GET /health
-src/rflens/ingest/        # secom.py (UCI SECOM), uls.py (FCC ULS, one service per run)
+src/rflens/ingest/        # secom.py (UCI SECOM), uls.py (FCC ULS, one service per run), fcc_eas.py (FCC grantees, test firms)
 migrations/               # Alembic
 tests/                    # tests/fixtures/uls: small real ULS subset, committed
 docs/blueprint.pdf
@@ -55,6 +55,21 @@ Details are for the `cell` service, snapshot complete/l_cell.zip dated 2026-10-1
   in usi 13401 (KNKN520): source lines 224503/224504 (same freq 869.04-879.99, power 140.820 vs
   276.000) and 224505/224506 (different frequency bands, 824.04-834.99 and 890.01-891.48). The
   primary key is (service, line_no).
+
+- (f) FCC equipment-authorization snapshots (`fcc_grantees`, `fcc_test_firms`) end 2021-03-22.
+  Devices registered later will not join to a grantee. When curating FCC IDs for report
+  extraction later, prefer IDs whose grantee code exists in `fcc_grantees`. A fresher source has
+  not been found.
+- (g) `fcc_test_firms.designation_number` is not unique: US5037 (Fangguang Inspection & Testing,
+  China; Unified Compliance Laboratory, United States) and US1273 (Shanghai Testing & Inspection
+  Institute, China; TARANG, India) each belong to two firms. The key is
+  `(designation_number, firm_name)`; do not join on designation_number alone.
+- (h) All 591 test firms are expired as of today (expiration dates run 2021-03-26 to 2023-03-18).
+  The list reflects accreditation around 2021, not current status.
+- (i) Placeholder text other than the explicit list (`N/A`, `NA`, `n/a`, blank, which become NULL)
+  is kept as written. In kept `fcc_grantees` fields there is exactly 1 `NIL` (2AA23, city) and
+  also 1 `nil` (2AJCJ, city), 1 `NONE` (OQ4, city) and 1 `-` (PK4, city). `fcc_test_firms` has
+  none. Whether these mean "no value" is unconfirmed.
 
 ## Working rules
 

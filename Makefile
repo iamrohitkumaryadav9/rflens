@@ -1,4 +1,4 @@
-.PHONY: up down migrate test lint run load-secom load-uls
+.PHONY: up down migrate test lint run load-secom load-uls load-fcc-eas
 
 up:
 	docker compose up -d --wait
@@ -20,6 +20,9 @@ load-secom:
 
 load-uls:
 	uv run python -m rflens.ingest.uls $(SERVICE)
+
+load-fcc-eas:
+	uv run python -m rflens.ingest.fcc_eas
 
 run:
 	uv run uvicorn rflens.api.main:app --host 127.0.0.1 --port 8000
