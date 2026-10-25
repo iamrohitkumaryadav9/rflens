@@ -22,6 +22,21 @@ unless the connected database name ends with `_test`. The roles from migrations 
 cluster-wide and keep their passwords; their grants are applied per database by the migrations, so
 they work in the test database too. CI has only `TEST_DATABASE_URL`, no `DATABASE_URL`.
 
+Tests must not assume CI is unset or set; pin environment variables with monkeypatch when behaviour
+depends on them. (GitHub Actions always sets `CI=true`; ci #10 to #13 failed because one test
+assumed it was unset and expected the "pytest" block reason where CI reports its own.)
+
+`make ci-local` is the check to run before pushing changes to tests, the workflow, migrations or
+settings. It runs the CI job in Docker (`src/rflens/ci_local.py`): a fresh pgvector Postgres from
+the workflow's `services:` block, a clean copy of the working tree (tracked and untracked files git
+does not ignore, never `.env`, `data/` or `.venv`), the workflow's `env:` plus `CI=true` and
+`GITHUB_ACTIONS=true`, no Ollama, no sql-mcp or docs-mcp, no API keys, and the workflow's own `run:`
+steps in order, stopping at the first failure. It reads `ci.yml` itself, so it cannot drift from CI.
+Limits: it does not run `uses:` steps (the copy replaces checkout, uv comes from pip), and the runner
+is `python:3.12-bookworm` (Debian), not GitHub's Ubuntu image. `--plan` prints what it would run
+without Docker. Workflow actions must be on Node 24 majors (checkout v7, setup-uv v10.3.2: setup-uv
+has no floating major tag since v8, so it is pinned to the exact release).
+
 ## Repo layout
 
 The repo root is the project root (no nested rflens/ folder).
@@ -29,18 +44,19 @@ The repo root is the project root (no nested rflens/ folder).
 ```
 src/rflens/__init__.py
 src/rflens/config.py      # pydantic-settings, reads .env
-src/rflens/db.py          # SQLAlchemy engine + session
+src/rflens/db.py          # SQLAlchemy engine + session; analyze() (loaders call it after commit)
 src/rflens/testdb.py      # create + migrate the test database; the _test name guard
+src/rflens/ci_local.py    # make ci-local: the CI job in Docker (see Tests)
 src/rflens/agents/        # sql_agent.py (+ sql_prompt.py, sql_tools.py: MCP client)
-src/rflens/eval/          # golden.py, scorer.py, eval_sql.py; golden set in eval/golden.yaml
+src/rflens/eval/          # golden.py, scorer.py, eval_sql.py, eval_docs.py, results_log.py
 src/rflens/llm/           # LLM gateway (see Conventions); config/llm_prices.yaml; make llm-spend
-scripts/llm_smoke.py      # live gateway check (needs LLM_ALLOW_PAID=true); analyze() (loaders call it after commit)
+scripts/llm_smoke.py      # live gateway check (needs LLM_ALLOW_PAID=true)
 src/rflens/api/main.py    # FastAPI app, GET /health
 src/rflens/ingest/        # secom.py (UCI SECOM), uls.py (FCC ULS, one service per run), fcc_eas.py (FCC grantees, test firms),
                           # spec_fetch.py + spec_chunker.py (3GPP specs -> data/interim/3gpp/<spec>/chunks.jsonl)
 src/rflens/retrieval/     # embedder.py (Ollama), index.py (load + embed chunks), hybrid.py
                           # (vector + keyword + RRF), embed_3gpp.py, eval_smoke.py
-eval/                     # smoke_3gpp.yaml (reviewed-labels questions)
+eval/                     # golden.yaml (all question types), RESULTS.md (eval run log + golden counts)
 src/rflens/mcp/           # docs_server.py: docs-mcp (search_docs, get_chunk), make docs-mcp, port 8101
                           # sql_server.py + sql_guard.py: sql-mcp (list_tables, describe_table,
                           # run_query), make sql-mcp, port 8102
@@ -105,10 +121,13 @@ data/                     # gitignored; raw downloads (data/raw/secom, data/raw/
   search merges vector and keyword top-k by reciprocal rank fusion (k=60, `RRF_K`). A table piece
   whose notes live in their own chunk carries the pointer "Notes for this table are in chunk X";
   search results expose X in `related_chunks`.
-- `eval/smoke_3gpp.yaml`: ten questions, status `reviewed-labels` (a human reviewed the expected
-  clauses and tables). A hit needs the right spec and an exact clause match (a sub-clause does not
-  count) or a listed table. `make eval-smoke [SPEC=38.101-1]` reports recall@5 for vector,
-  keyword and hybrid. Eight questions are a smoke test, not a basis for tuning.
+- The 3GPP smoke set (the old `eval/smoke_3gpp.yaml`, now deleted) lives in `eval/golden.yaml` as
+  `doc-01..10` (author human; drafted by the assistant, expected clauses and tables reviewed by the
+  owner). A hit needs the right spec and an exact clause match (a sub-clause does not count) or a
+  listed table. `make eval-smoke [SPEC=38.101-1] [FILTER_SPEC=1]` is the quick in-process recall@5
+  check (vector, keyword, hybrid) over the doc questions of the golden file; `make eval-docs` runs
+  the same questions through docs-mcp, with and without the spec filter, and records the result in
+  `eval/RESULTS.md`. Ten or 22 questions are a smoke test, not a basis for tuning.
 - **Default retrieval mode is `vector` (INTERIM).** It is the config value `RETRIEVAL_MODE`
   (env-overridable; `vector`, `keyword` or `hybrid`), chosen from the smoke-eval diagnosis where
   the keyword leg is length-biased and adds noise to hybrid. Keyword and hybrid stay selectable
@@ -203,8 +222,18 @@ data/                     # gitignored; raw downloads (data/raw/secom, data/raw/
   return the entity and its measure and break ties by key ascending; never guess units, report
   ASSUMED/UNKNOWN ones in notes; refuse data changes, personal contact data and out-of-scope
   questions. Six worked examples, none from the golden set (a test enforces it).
-- **Golden set** `eval/golden.yaml` (all question types; ids `sql-01..17`, `refuse-01..03`; sql-16 and sql-17 are held-out checks of the FRN guidance, all
-  `reviewed` by the project owner on 2026-10-24). sql questions carry `reference_sql` and a stored
+- **Golden set** `eval/golden.yaml`, all question types, 52 questions (`eval/RESULTS.md` has the
+  counts per type and author, regenerated by `make results-header`; a test fails when stale):
+  `sql-01..19`, `doc-01..22`, `mixed-01..05`, `refuse-01..06`. Every question has an `author`:
+  `human` (the project owner edited and reviewed it; status `reviewed`) or `assistant` (drafted by
+  the assistant; status `draft` until reviewed). Human: 17 sql, 10 doc, 3 refuse. Assistant: 2 sql
+  (sql-18, sql-19: generalisation checks that need a schema-comment fact the question does not
+  mention), 12 doc (doc-11..22, six per spec, each with exactly one expected clause or table and
+  `confirmed_chunks` that exist in the corpus), 5 mixed (a spec table fact plus a SQL lookup, band
+  edges in the SQL; NOT scored yet, the week 4 orchestrator will run them), 3 refuse. sql-16 and
+  sql-17 are held-out checks of the FRN guidance. doc and mixed questions have `spec` and
+  `expected_clauses` / `expected_tables`; never quote spec text in them. sql and mixed questions
+  carry `reference_sql` and a stored
   `reference_result` produced through sql-mcp (`make golden-refresh`, needs `make sql-mcp`);
   `ordered: true` where the question asks for a ranking; `must_mention` where the agent's notes
   must say something (sql-09: the ERP unit is unknown). Scorer (`eval/scorer.py`): column names
@@ -213,9 +242,13 @@ data/                     # gitignored; raw downloads (data/raw/secom, data/raw/
   `ordered`; numbers to 1e-6 relative; NULL equals NULL only; empty results need at least as many
   columns as the reference. `make eval-sql` (PAID; needs
   `LLM_ALLOW_PAID=true` and a running sql-mcp; `DRY=1` prints the plan and worst-case cost and
-  calls nothing) runs sql and refuse questions, with a per-run cap of questions x 4 and no fallback
-  provider for that command only. Every real run appends a row (date, run_id, commit, model/tier,
-  golden size, accuracy, calls, cost, note) to `eval/RESULTS.md`; `NOTE=...` fills the note.
+  calls nothing) runs sql and refuse questions (25 now; the worst case is about $0.32 at 800 output
+  tokens), with a per-run cap of questions x 4 and no fallback provider for that command only.
+  `make eval-docs` (FREE; needs a running docs-mcp and Ollama) scores recall@5 of the doc
+  questions in vector, keyword and hybrid mode with and without the spec filter, for the human and
+  the assistant questions separately. Every real eval run appends rows (date, run_id, commit,
+  model/tier or question group, accuracy, calls, cost, note) to `eval/RESULTS.md`; `NOTE=...`
+  fills the note.
 - **No authentication in local development.** Per the MCP authorization spec (2026-07-28),
   authorization is OPTIONAL, and HTTP-based servers that offer it follow OAuth 2.1 (the server is a
   resource server publishing OAuth 2.0 Protected Resource Metadata, RFC 9728, and accepting only

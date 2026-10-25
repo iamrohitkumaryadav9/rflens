@@ -349,7 +349,7 @@ def test_golden_file_structure_and_contents(tools, qtext) -> None:
     golden = load_golden()
     assert problems(golden) == []
     by_type = {t: [q for q in golden if q.type == t] for t in ("sql", "refuse")}
-    assert (len(by_type["sql"]), len(by_type["refuse"]), len(golden)) == (17, 3, 20)
+    assert (len(by_type["sql"]), len(by_type["refuse"]), len(golden)) == (19, 6, 52)
     by_id = {q.id: q for q in golden}
     assert by_id["sql-10"].question == (
         "How many cellular licences and how many spectrum leases expired in 2020?"
@@ -378,7 +378,9 @@ def test_golden_file_structure_and_contents(tools, qtext) -> None:
     assert by_id["sql-17"].reference_result.rows == [["0002210086", 11]]
     assert "licensee_frn IS NOT NULL" in by_id["sql-17"].reference_sql
     assert "Rank 1 has 11, rank 2 has 5" in by_id["sql-17"].notes
-    assert {q.status for q in golden} == {"reviewed"}
+    # human-written questions are reviewed; assistant drafts wait for review
+    assert {q.status for q in golden if q.author == "human"} == {"reviewed"}
+    assert {q.status for q in golden if q.author == "assistant"} == {"draft"}
     assert next(q for q in golden if q.id == "sql-08").question == (
         "How many licensed cellular transmitter locations are in Texas?"
     )
@@ -396,8 +398,17 @@ def test_golden_file_structure_and_contents(tools, qtext) -> None:
         assert tools.run_query(q.reference_sql, qtext).ok, q.id  # valid against the schema
     for q in by_type["refuse"]:
         assert q.expected_refusal and q.reference_sql is None
-    ranked = {q.id for q in golden if q.ordered}
-    assert ranked == {"sql-03", "sql-06", "sql-07", "sql-11", "sql-13", "sql-15", "sql-17"}
+    ranked = {q.id for q in golden if q.ordered and q.type == "sql"}
+    assert ranked == {
+        "sql-03",
+        "sql-06",
+        "sql-07",
+        "sql-11",
+        "sql-13",
+        "sql-15",
+        "sql-17",
+        "sql-18",
+    }
     erp = next(q for q in golden if q.id == "sql-09")
     assert erp.must_mention == ["unknown"] and "UNKNOWN" in erp.notes
     assert all(

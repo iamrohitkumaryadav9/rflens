@@ -1,4 +1,4 @@
-.PHONY: up down migrate test-db test lint run load-secom load-uls load-fcc-eas fetch-3gpp chunk-3gpp embed-3gpp eval-smoke docs-mcp sql-mcp llm-spend golden-refresh eval-sql
+.PHONY: up down migrate test-db test lint run load-secom load-uls load-fcc-eas fetch-3gpp chunk-3gpp embed-3gpp eval-smoke docs-mcp sql-mcp llm-spend golden-refresh eval-sql eval-docs results-header ci-local
 
 up:
 	docker compose up -d --wait
@@ -66,3 +66,17 @@ golden-refresh:
 # appends a row to eval/RESULTS.md; NOTE=... fills its last column.
 eval-sql:
 	uv run python -m rflens.eval.eval_sql $(if $(DRY),--dry-run) $(if $(NOTE),--note "$(NOTE)")
+
+# Retrieval recall@5 of the golden doc questions through docs-mcp (run make docs-mcp first).
+# FREE: no LLM call. Appends rows to eval/RESULTS.md; NOTE=... fills the note.
+eval-docs:
+	uv run python -m rflens.eval.eval_docs $(if $(NOTE),--note "$(NOTE)")
+
+# Refresh the generated golden-set counts at the top of eval/RESULTS.md.
+results-header:
+	uv run python -m rflens.eval.results_log
+
+# The CI job in Docker: fresh Postgres, clean copy of the working tree (no .env, no data/), the
+# workflow's env plus CI=true, no Ollama or MCP servers. Run it before pushing test or CI changes.
+ci-local:
+	uv run python -m rflens.ci_local

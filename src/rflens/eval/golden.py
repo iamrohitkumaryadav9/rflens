@@ -1,12 +1,19 @@
 """The golden set (eval/golden.yaml): one file for every question type.
 
-Fields: id, type (sql | doc | mixed | refuse), question, status (draft | reviewed), notes, and per
-type: reference_sql + reference_result (sql), expected_clauses (doc, later), expected_refusal
-(refuse). Optional: `ordered` (the question asks for a ranking, so row order counts) and
-`must_mention` (words the agent's notes must contain, case-insensitive; used for the ERP unit).
+Fields: id, type (sql | doc | mixed | refuse), author (human | assistant: who wrote the question;
+a human edited and reviewed every "human" one), question, status (draft | reviewed), notes, and per
+type: reference_sql + reference_result (sql, mixed), spec + expected_clauses / expected_tables +
+confirmed_chunks (doc, mixed: the document part), expected_refusal (refuse). Optional: `ordered`
+(the question asks for a ranking, so row order counts) and `must_mention` (words the agent's notes
+must contain, case-insensitive; used for the ERP unit).
 
-`python -m rflens.eval.golden` runs every reference_sql through sql-mcp and stores the result in
-the file (the reference result), so the data behind the golden answers is reviewable.
+A doc question is answered by a chunk of `spec` whose clause equals one of expected_clauses
+exactly, or whose table number is in expected_tables. Assistant-written doc questions have exactly
+one expected clause or table, and `confirmed_chunks` lists chunks (ids) known to exist in the
+corpus for it. Mixed questions are not scored yet (the week 4 orchestrator runs them).
+
+`python -m rflens.eval.golden` runs every reference_sql (sql and mixed) through sql-mcp and stores
+the result in the file (the reference result), so the data behind the golden answers is reviewable.
 """
 
 import datetime
@@ -22,6 +29,8 @@ from rflens.eval.scorer import ResultSet
 GOLDEN_PATH = Path(__file__).resolve().parents[3] / "eval" / "golden.yaml"
 TYPES = ("sql", "doc", "mixed", "refuse")
 STATUSES = ("draft", "reviewed")
+AUTHORS = ("human", "assistant")
+SPECS = ("36.101", "38.101-1")
 MAX_REFERENCE_ROWS = 50
 
 
@@ -37,6 +46,10 @@ class GoldenQuestion:
     ordered: bool = False
     must_mention: list[str] = field(default_factory=list)
     expected_clauses: list[str] = field(default_factory=list)
+    expected_tables: list[str] = field(default_factory=list)
+    confirmed_chunks: list[str] = field(default_factory=list)
+    spec: str | None = None
+    author: str = "human"
     expected_refusal: str | None = None
 
 
@@ -59,7 +72,11 @@ def parse(raw: dict) -> list[GoldenQuestion]:
                 reference_result=(ResultSet(result["columns"], result["rows"]) if result else None),
                 ordered=bool(q.get("ordered", False)),
                 must_mention=list(q.get("must_mention", [])),
-                expected_clauses=list(q.get("expected_clauses", [])),
+                expected_clauses=list(q.get("expected_clauses") or []),
+                expected_tables=list(q.get("expected_tables") or []),
+                confirmed_chunks=list(q.get("confirmed_chunks") or []),
+                spec=q.get("spec"),
+                author=q.get("author", ""),
                 expected_refusal=q.get("expected_refusal"),
             )
         )
@@ -84,15 +101,43 @@ def problems(questions: list[GoldenQuestion]) -> list[str]:
             found.append(f"{q.id}: unknown status {q.status!r}")
         if not q.question.strip():
             found.append(f"{q.id}: empty question")
-        if q.type == "sql":
+        if q.author not in AUTHORS:
+            found.append(f"{q.id}: author must be one of {AUTHORS}, got {q.author!r}")
+        if q.type in ("sql", "mixed"):
             if not q.reference_sql:
-                found.append(f"{q.id}: sql question without reference_sql")
+                found.append(f"{q.id}: {q.type} question without reference_sql")
             if q.reference_result is None:
                 found.append(f"{q.id}: reference_sql has no stored reference_result")
             if not q.notes.strip():
                 found.append(f"{q.id}: no notes (state the interpretation)")
+        if q.type in ("doc", "mixed"):
+            found += _doc_problems(q)
         if q.type == "refuse" and not q.expected_refusal:
             found.append(f"{q.id}: refuse question without expected_refusal")
+    return found
+
+
+def _doc_problems(q: GoldenQuestion) -> list[str]:
+    """Problems of the document part of a doc or mixed question."""
+    found = []
+    if q.spec not in SPECS:
+        found.append(f"{q.id}: spec must be one of {SPECS}, got {q.spec!r}")
+    expected = len(q.expected_clauses) + len(q.expected_tables)
+    if expected == 0:
+        found.append(f"{q.id}: no expected clause or table")
+    if q.author == "assistant" and (expected != 1 or not q.confirmed_chunks):
+        found.append(
+            f"{q.id}: assistant-written: exactly one expected clause or table, and confirmed_chunks"
+        )
+    for chunk_id in q.confirmed_chunks:
+        if not chunk_id.startswith(f"{q.spec}@"):
+            found.append(f"{q.id}: confirmed chunk {chunk_id} is not from spec {q.spec}")
+        elif (
+            q.expected_clauses
+            and chunk_id.split("/")[1] not in q.expected_clauses
+            and not q.expected_tables
+        ):
+            found.append(f"{q.id}: confirmed chunk {chunk_id} is not in the expected clause")
     return found
 
 
@@ -118,7 +163,7 @@ def refresh(path: Path, tools: SqlMcpTools, today: datetime.date | None = None) 
     today = today or datetime.date.today()
     lines = []
     for q in raw["questions"]:
-        if q["type"] != "sql":
+        if q["type"] not in ("sql", "mixed"):
             continue
         outcome = tools.run_query(q["reference_sql"], f"golden reference {q['id']}")
         if not outcome.ok:

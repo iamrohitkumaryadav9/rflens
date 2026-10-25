@@ -1,6 +1,8 @@
 """Smoke eval: recall@5 of vector-only, keyword-only and hybrid search (make eval-smoke).
 
-Questions come from eval/smoke_3gpp.yaml (expected clauses reviewed by a human). Run it after
+Questions are the type-doc questions of eval/golden.yaml (the first ten were the smoke set; their
+expected clauses were reviewed by a human). This is the quick in-process check; `make eval-docs`
+runs the same questions through docs-mcp and records the result in eval/RESULTS.md. Run it after
 the full embed; with a partial embed the numbers mean little and a warning says so. A hit needs
 the right spec and an exactly matching clause (a sub-clause does not count) or listed table.
 """
@@ -17,7 +19,7 @@ from rflens.db import get_engine
 from rflens.retrieval.embedder import Embedder, OllamaEmbedder
 from rflens.retrieval.hybrid import MODES, Hit, search
 
-DEFAULT_FILE = Path(__file__).resolve().parents[3] / "eval" / "smoke_3gpp.yaml"
+DEFAULT_FILE = Path(__file__).resolve().parents[3] / "eval" / "golden.yaml"
 
 
 @dataclass(frozen=True)
@@ -27,13 +29,11 @@ class Question:
     question: str
     expected_clauses: tuple[str, ...]
     expected_tables: tuple[str, ...]
+    author: str = ""
 
 
-def load_status(path: Path) -> str:
-    return str(yaml.safe_load(path.read_text("utf-8")).get("status", "unknown"))
-
-
-def load_questions(path: Path) -> list[Question]:
+def load_questions(path: Path, author: str | None = None) -> list[Question]:
+    """The type-doc questions of a golden file (optionally only those by one author)."""
     data = yaml.safe_load(path.read_text("utf-8"))
     return [
         Question(
@@ -42,8 +42,10 @@ def load_questions(path: Path) -> list[Question]:
             q["question"],
             tuple(q.get("expected_clauses") or ()),
             tuple(q.get("expected_tables") or ()),
+            q.get("author", ""),
         )
         for q in data["questions"]
+        if q.get("type") == "doc" and author in (None, q.get("author"))
     ]
 
 
@@ -90,6 +92,7 @@ def main() -> None:
     parser.add_argument("--file", type=Path, default=DEFAULT_FILE)
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--spec", help="only the questions about this spec, e.g. 38.101-1")
+    parser.add_argument("--author", choices=("human", "assistant"), help="only one author")
     parser.add_argument(
         "--filter-spec",
         action="store_true",
@@ -99,7 +102,7 @@ def main() -> None:
 
     settings = get_retrieval_settings()
     embedder = OllamaEmbedder(settings.ollama_base_url, settings.embed_model)
-    questions = [q for q in load_questions(args.file) if args.spec in (None, q.spec)]
+    questions = [q for q in load_questions(args.file, args.author) if args.spec in (None, q.spec)]
     with get_engine().connect() as conn:
         done, total = conn.execute(
             text("SELECT count(*) FILTER (WHERE embedding_model = :m), count(*) FROM chunks"),
@@ -110,7 +113,7 @@ def main() -> None:
             print("WARNING: not all chunks are embedded; recall numbers are not meaningful.")
         results = recall_at_k(conn, embedder, questions, k=args.top_k, filter_spec=args.filter_spec)
     print(
-        f"\n{args.file.name} (status: {load_status(args.file)}); spec filter: "
+        f"\n{args.file.name} ({len(questions)} doc questions); spec filter: "
         f"{'ON (each question searches only its own spec)' if args.filter_spec else 'off'}; "
         f"hit rank within top {args.top_k}:"
     )

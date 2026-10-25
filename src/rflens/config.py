@@ -174,12 +174,14 @@ class LlmSettings(BaseSettings):
 
 
 class AgentSettings(BaseSettings):
-    """Agents reach data only through MCP servers; this is where sql-mcp is (env: SQL_MCP_URL).
+    """Agents reach data only through MCP servers; this is where sql-mcp and docs-mcp are (env:
+    SQL_MCP_URL, DOCS_MCP_URL).
     AGENT_MAX_OUTPUT_TOKENS bounds one generation of the SQL agent (thinking tokens included)."""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     sql_mcp_url: str = "http://127.0.0.1:8102/mcp"
+    docs_mcp_url: str = "http://127.0.0.1:8101/mcp"
     agent_max_output_tokens: int = 800
 
 

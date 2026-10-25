@@ -29,7 +29,6 @@ from rflens.retrieval.eval_smoke import (
     Question,
     is_hit,
     load_questions,
-    load_status,
     recall_at_k,
 )
 from rflens.retrieval.hybrid import Hit, keyword_search, rrf, search, vector_search
@@ -499,14 +498,17 @@ def test_split_table_hit_carries_the_notes_chunk_in_related_chunks(conn: Connect
 # --- smoke eval ---------------------------------------------------------------------------------
 
 
-def test_smoke_eval_file_is_reviewed_and_well_formed() -> None:
-    assert load_status(DEFAULT_FILE) == "reviewed-labels"
+def test_smoke_eval_reads_the_doc_questions_of_the_golden_file() -> None:
+    assert DEFAULT_FILE.name == "golden.yaml"
     questions = load_questions(DEFAULT_FILE)
-    assert len(questions) == 10
-    assert len({q.id for q in questions}) == 10
+    assert len(questions) == 22 and len({q.id for q in questions}) == 22
+    assert all(q.id.startswith("doc-") for q in questions)  # sql, mixed and refuse are skipped
     assert {q.spec for q in questions} <= {"36.101", "38.101-1"}
     assert all(q.expected_clauses or q.expected_tables for q in questions)
-    q07 = next(q for q in questions if q.id == "q07")
+    human = load_questions(DEFAULT_FILE, author="human")
+    assert [q.id for q in human] == [f"doc-{i:02d}" for i in range(1, 11)]  # the old smoke set
+    assert len(load_questions(DEFAULT_FILE, author="assistant")) == 12
+    q07 = next(q for q in questions if q.id == "doc-07")
     assert "n78" in q07.question and "20 MHz" in q07.question
     assert q07.expected_clauses == ("7.3.2",)
 
