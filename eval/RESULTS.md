@@ -5,15 +5,15 @@ set grew between runs, so compare rows through their question counts. "commit" i
 started, "+dirty" if the working tree had uncommitted changes.
 
 <!-- golden-counts:start (generated: make results-header) -->
-**Golden set** (eval/golden.yaml): 52 questions. author = who wrote the question (human: edited and reviewed by the project owner).
+**Golden set** (eval/golden.yaml): 51 questions. author = who wrote the question (human: edited and reviewed by the project owner).
 
 | type | human | assistant | total | draft | reviewed |
 |---|---|---|---|---|---|
-| sql | 17 | 2 | 19 | 2 | 17 |
-| doc | 10 | 12 | 22 | 12 | 10 |
-| mixed | 0 | 5 | 5 | 5 | 0 |
-| refuse | 3 | 3 | 6 | 3 | 3 |
-| total | 30 | 22 | 52 | 22 | 30 |
+| sql | 17 | 2 | 19 | 0 | 19 |
+| doc | 10 | 12 | 22 | 0 | 22 |
+| mixed | 0 | 4 | 4 | 0 | 4 |
+| refuse | 3 | 3 | 6 | 0 | 6 |
+| total | 30 | 21 | 51 | 0 | 51 |
 <!-- golden-counts:end -->
 
 ## SQL agent runs (make eval-sql)

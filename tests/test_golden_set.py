@@ -1,4 +1,4 @@
-"""The grown golden set: authors, doc targets, mixed questions, and the new drafts.
+"""The grown golden set: authors, doc targets, mixed questions and the assistant questions.
 
 Doc and mixed targets cannot be checked against the 3GPP corpus here (the corpus is in the
 developer database, never in the repo or CI), so these tests check what can be known offline: the
@@ -34,22 +34,22 @@ def test_the_file_validates_and_counts_per_type_and_author() -> None:
         ("doc", "human"): 10,
         ("doc", "assistant"): 12,
         ("mixed", "human"): 0,
-        ("mixed", "assistant"): 5,
+        ("mixed", "assistant"): 4,
         ("refuse", "human"): 3,
         ("refuse", "assistant"): 3,
     }
-    assert len(GOLDEN) == 52 and len({q.id for q in GOLDEN}) == 52
+    assert len(GOLDEN) == 51 and len({q.id for q in GOLDEN}) == 51
 
 
 def test_authors_and_statuses_are_consistent() -> None:
     human = [q for q in GOLDEN if q.author == "human"]
     assistant = [q for q in GOLDEN if q.author == "assistant"]
     assert {q.status for q in human} == {"reviewed"}
-    assert {q.status for q in assistant} == {"draft"}
-    # the questions that existed before this change are all human; the new ones are the drafts
+    assert {q.status for q in assistant} == {"reviewed"}  # the owner reviewed all 22 drafts
+    # the questions that existed before the assistant's are human; mixed-03 was dropped in review
     assert {q.id for q in assistant} == (
         {f"doc-{i}" for i in range(11, 23)}
-        | {f"mixed-{i:02d}" for i in range(1, 6)}
+        | {f"mixed-{i:02d}" for i in (1, 2, 4, 5)}
         | {"sql-18", "sql-19", "refuse-04", "refuse-05", "refuse-06"}
     )
 
@@ -97,21 +97,14 @@ def test_assistant_doc_questions_cover_transmitter_receiver_and_bands_with_mixed
 def test_doc_18_says_single_carrier_so_the_ca_clause_is_not_an_answer() -> None:
     q = BY_ID["doc-18"]
     assert "single carrier" in q.question and "NS_07" in q.question
+    assert "not category M1 or M2" in q.question  # so clause 6.2.4E is excluded by the wording
+    assert "excluded by the wording" in q.notes and "does not exclude" not in q.notes
     assert q.expected_tables == ["6.2.4-2"] and q.confirmed_chunks == ["36.101@19.6.0/6.2.4/4"]
     assert "6.2.4A.7" in q.notes and "CA_NS_07" in q.notes  # the excluded clause is named
 
 
-def test_mixed_03_states_its_own_rule_so_there_is_one_answer() -> None:
-    q = BY_ID["mixed-03"]
-    for phrase in ("whole assigned block", "any licence status", "neither", "TS 36.101"):
-        assert phrase in q.question, phrase
-    assert "Ignore records that have no frequency" in q.question
-    assert q.reference_result.rows == [[1]] and q.reference_result.columns == [
-        "records_in_neither_range"
-    ]
-    assert "IS NOT NULL" in q.reference_sql and "license_status" not in q.reference_sql
-    assert "KNKQ214" not in q.question  # the answer is a number, not a hint
-    assert "'outside both ranges'" in q.notes and "0" in q.notes  # the dropped wording is recorded
+def test_mixed_03_was_dropped_in_review() -> None:
+    assert "mixed-03" not in BY_ID  # unnatural question, the answer rested on a single record
 
 
 def test_notes_quote_no_spec_text() -> None:
@@ -126,21 +119,20 @@ def test_notes_quote_no_spec_text() -> None:
 
 def test_mixed_questions_pair_one_spec_target_with_a_sql_lookup() -> None:
     mixed = of("mixed")
-    assert len(mixed) == 5
+    assert [q.id for q in mixed] == ["mixed-01", "mixed-02", "mixed-04", "mixed-05"]
     for q in mixed:
         assert q.expected_clauses or q.expected_tables, q.id
         assert len(q.expected_clauses) + len(q.expected_tables) == 1, q.id
         assert q.confirmed_chunks and q.reference_sql and q.reference_result.rows, q.id
         check_query(q.reference_sql)  # passes the sql-mcp guard
         assert "TS 36.101" in q.question or "TS 38.101-1" in q.question, q.id
-        assert "Not scored yet" in q.notes and "ASSUMED MHz" in q.notes, q.id
+        assert "ASSUMED MHz" in q.notes and "Not scored" not in q.notes, q.id
+        assert "uls_fr rows" not in q.notes, q.id
 
 
 def test_mixed_sql_uses_the_band_edges_from_the_spec_tables() -> None:
     assert "824" in BY_ID["mixed-01"].reference_sql and "849" in BY_ID["mixed-01"].reference_sql
     assert "869" in BY_ID["mixed-02"].reference_sql and "894" in BY_ID["mixed-02"].reference_sql
-    sql3 = BY_ID["mixed-03"].reference_sql  # both band 5 ranges
-    assert all(n in sql3 for n in ("824", "849", "869", "894"))
     assert "869" in BY_ID["mixed-04"].reference_sql and BY_ID["mixed-04"].must_mention == [
         "unknown"
     ]
@@ -151,17 +143,14 @@ def test_mixed_sql_uses_the_band_edges_from_the_spec_tables() -> None:
 
 
 def test_mixed_reference_results() -> None:
-    top5 = BY_ID["mixed-01"].reference_result.rows
-    assert [r[0] for r in top5] == [
-        "0003290673",
-        "0003291192",
-        "0014980726",
-        "0002942159",
-        "0017329715",
-    ]
-    assert [r[2] for r in top5] == [422, 315, 283, 278, 42]  # rank 5 (42) is above rank 6 (27)
+    top5 = BY_ID["mixed-01"]
+    assert top5.reference_result.columns == ["active_licences"] and top5.ordered
+    # counts only, like sql-18; rank 5 (42) is above rank 6 (27); the companies are in the notes
+    assert top5.reference_result.rows == [[422], [315], [283], [278], [42]]
+    assert "licensee_name" not in top5.reference_sql and "LIMIT 5" in top5.reference_sql
+    for name in ("Cellco Partnership", "CommNet Cellular Inc.", "0003290673", "0017329715"):
+        assert name in top5.notes, name
     assert BY_ID["mixed-02"].reference_result.rows == [[116525]]
-    assert BY_ID["mixed-03"].reference_result.rows == [[1]]
     assert BY_ID["mixed-04"].reference_result.rows == [["KNKA683", 1787.3]]
     assert BY_ID["mixed-05"].reference_result.rows == [[88057]]
 
@@ -181,6 +170,13 @@ def test_sql_18_reference_groups_by_frn_though_the_question_does_not_say_so() ->
     assert "418" in q.notes and "315" in q.notes  # the by-name value, and rank 2
 
 
+def test_mixed_05_wording_after_review() -> None:
+    q = BY_ID["mixed-05"]
+    assert "fall inside the uplink range of NR band n8" in q.question
+    assert q.question.endswith("(These cellular frequencies would overlap n8 uplink use.)")
+    assert q.reference_result.rows == [[88057]]
+
+
 def test_sql_19_needs_the_snapshot_cutoff_that_the_question_does_not_mention() -> None:
     q = BY_ID["sql-19"]
     assert q.question == "How many FCC equipment grantees were registered in 2022?"
@@ -192,9 +188,9 @@ def test_sql_19_needs_the_snapshot_cutoff_that_the_question_does_not_mention() -
     ("qid", "word"),
     [("refuse-04", "DROP"), ("refuse-05", "address"), ("refuse-06", "prediction")],
 )
-def test_new_refuse_drafts(qid: str, word: str) -> None:
+def test_assistant_refuse_questions(qid: str, word: str) -> None:
     q = BY_ID[qid]
-    assert q.author == "assistant" and q.status == "draft" and q.reference_sql is None
+    assert q.author == "assistant" and q.status == "reviewed" and q.reference_sql is None
     assert word.lower() in (q.expected_refusal + " " + q.notes).lower()
     if qid == "refuse-04":
         assert q.question.startswith("Could you please drop") and "table" in q.question

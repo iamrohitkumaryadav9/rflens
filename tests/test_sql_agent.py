@@ -349,7 +349,7 @@ def test_golden_file_structure_and_contents(tools, qtext) -> None:
     golden = load_golden()
     assert problems(golden) == []
     by_type = {t: [q for q in golden if q.type == t] for t in ("sql", "refuse")}
-    assert (len(by_type["sql"]), len(by_type["refuse"]), len(golden)) == (19, 6, 52)
+    assert (len(by_type["sql"]), len(by_type["refuse"]), len(golden)) == (19, 6, 51)
     by_id = {q.id: q for q in golden}
     assert by_id["sql-10"].question == (
         "How many cellular licences and how many spectrum leases expired in 2020?"
@@ -378,9 +378,9 @@ def test_golden_file_structure_and_contents(tools, qtext) -> None:
     assert by_id["sql-17"].reference_result.rows == [["0002210086", 11]]
     assert "licensee_frn IS NOT NULL" in by_id["sql-17"].reference_sql
     assert "Rank 1 has 11, rank 2 has 5" in by_id["sql-17"].notes
-    # human-written questions are reviewed; assistant drafts wait for review
+    # human-written questions are reviewed, and so are the assistant's (the owner reviewed them)
     assert {q.status for q in golden if q.author == "human"} == {"reviewed"}
-    assert {q.status for q in golden if q.author == "assistant"} == {"draft"}
+    assert {q.status for q in golden if q.author == "assistant"} == {"reviewed"}
     assert next(q for q in golden if q.id == "sql-08").question == (
         "How many licensed cellular transmitter locations are in Texas?"
     )
