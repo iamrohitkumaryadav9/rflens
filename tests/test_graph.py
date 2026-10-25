@@ -994,3 +994,49 @@ def test_the_sql_retry_is_bounded_by_the_per_question_cap(make_env, tag, band_ro
     # planner, SQL agent, writer used the 3 calls; the SQL retry could not start
     assert out.status == "failed" and "per-question call cap" in out.state["answer"]
     assert len(env.provider.calls) == 3
+
+
+# --- frn_name_grouping is a SQL-side failure: one SQL retry, then redact --------------------------
+
+SPLIT_SQL = sql_answer(
+    "SELECT licensee_frn, licensee_name, count(*) AS n FROM v_uls_licences "
+    "GROUP BY licensee_frn, licensee_name HAVING count(*) < 0"
+)
+FRN_SQL = sql_answer(
+    "SELECT licensee_frn, min(licensee_name) AS licensee, count(*) AS n FROM v_uls_licences "
+    "GROUP BY licensee_frn HAVING count(*) < 0"
+)
+
+
+def test_grouping_by_name_and_frn_is_sent_back_to_the_sql_agent_once(make_env, tag) -> None:
+    env = make_env(
+        [
+            plan("sql"),
+            SPLIT_SQL,
+            write("No licensee matched [S1]."),
+            FRN_SQL,
+            write("No licensee matched [S1]."),
+        ]
+    )
+    out = env.ask(f"Which licensees hold the most licences? {tag}")
+    assert out.status == "answered", out.state["verification"]
+    assert out.state["sql_retries"] == 1 and out.stats["sql_agent"]["calls"] == 2
+    retry_input = env.provider.calls[3][0][1].content
+    assert "frn_name_grouping" in retry_input and "group by licensee_frn alone" in retry_input
+    assert out.state["draft_history"][0]["failures"][0]["type"] == "frn_name_grouping"
+
+
+def test_a_grouping_that_the_retry_does_not_fix_is_withheld(make_env, tag) -> None:
+    env = make_env(
+        [
+            plan("sql"),
+            SPLIT_SQL,
+            write("No licensee matched [S1]."),
+            SPLIT_SQL,
+            write("No licensee matched [S1]."),
+        ]
+    )
+    out = env.ask(f"Which licensees hold the most licences? {tag}")
+    assert out.status == "partial"
+    assert out.state["verification"]["redacted"] == ["frn_name_grouping"]
+    assert out.state["sql"] is None and out.stats["writer"]["calls"] == 2

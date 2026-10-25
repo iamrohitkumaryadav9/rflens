@@ -1,0 +1,8 @@
+# The UI is local only and sends nothing anywhere: no usage statistics, 127.0.0.1 only.
+[browser]
+gatherUsageStats = false
+
+[server]
+address = "127.0.0.1"
+headless = true
+port = 8502

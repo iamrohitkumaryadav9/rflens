@@ -21,6 +21,9 @@ Evidence is the SQL result (`[S1]`) and the retrieved spec chunks (`[D1]`, `[D2]
   (missing_assumption_wording).
 - quotations: quoted text must occur in a cited chunk, a SQL cell or the question
   (unsupported_quote).
+- companies: a SQL that groups by licensee_name together with licensee_frn, or by licensee_name
+  alone while v_uls_licences exposes licensee_frn, splits one company across its name spellings
+  (frn_name_grouping; the schema comments say to group by licensee_frn alone).
 - mixed questions: each numeric literal that the SQL agent compared with a frequency column in a
   WHERE clause (a band edge) must appear in the text of a cited chunk (unsupported_sql_literal).
   Zero is exempt: it is a guard, not an edge.
@@ -351,6 +354,12 @@ def verify(
                     )
                 )
 
+    # --- companies are identified by licensee_frn, not by name (schema convention) -------------
+    if sql_ok:
+        problem = frn_name_grouping(executed)
+        if problem:
+            failures.append(_fail("frn_name_grouping", None, problem))
+
     # --- band table joins: which band, and does the side match the question? --------------------
     band_joins: list[dict] = []
     if route == "mixed" and sql_ok:
@@ -373,6 +382,57 @@ def verify(
         "band_edges": band_edges,
         "band_joins": band_joins,
     }
+
+
+FRN_VIEWS = frozenset({"v_uls_licences"})  # the relations that expose licensee_frn
+
+
+def _group_columns(group: exp.Group) -> set[str]:
+    """Column names inside a GROUP BY, with ordinals (GROUP BY 1) and output aliases resolved to
+    the SELECT expression they stand for."""
+    select = group.parent if isinstance(group.parent, exp.Select) else None
+    outputs = list(select.expressions) if select is not None else []
+    by_alias = {e.alias: e.this for e in outputs if isinstance(e, exp.Alias)}
+    names: set[str] = set()
+    for item in group.expressions:
+        targets = [item]
+        if isinstance(item, exp.Literal) and not item.is_string and item.name.isdigit():
+            index = int(item.name) - 1
+            if 0 <= index < len(outputs):
+                chosen = outputs[index]
+                targets = [chosen.this if isinstance(chosen, exp.Alias) else chosen]
+        elif isinstance(item, exp.Column) and not item.table and item.name in by_alias:
+            targets = [by_alias[item.name]]
+        for target in targets:
+            names.update(c.name.lower() for c in target.find_all(exp.Column))
+    return names
+
+
+def frn_name_grouping(executed_sql: str) -> str | None:
+    """A message when the SQL groups companies by licensee_name together with licensee_frn, or by
+    licensee_name alone while licensee_frn is available in the queried view; else None. One company
+    (one FRN) appears under several name spellings, so this splits it."""
+    try:
+        tree = sqlglot.parse_one(executed_sql, read="postgres")
+    except sqlglot.errors.SqlglotError:
+        return None
+    has_frn_view = any(t.name in FRN_VIEWS for t in tree.find_all(exp.Table))
+    for group in tree.find_all(exp.Group):
+        names = _group_columns(group)
+        if "licensee_name" not in names:
+            continue
+        if "licensee_frn" in names:
+            return (
+                "the SQL groups by licensee_name together with licensee_frn, which splits one "
+                "company across its name spellings: group by licensee_frn alone and show "
+                "min(licensee_name)"
+            )
+        if has_frn_view:
+            return (
+                "the SQL groups companies by licensee_name although licensee_frn is available: "
+                "group by licensee_frn alone and show min(licensee_name)"
+            )
+    return None
 
 
 SIDE_WORDS = {

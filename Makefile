@@ -1,4 +1,4 @@
-.PHONY: up down migrate test-db test lint run load-secom load-uls load-fcc-eas fetch-3gpp chunk-3gpp embed-3gpp eval-smoke docs-mcp sql-mcp llm-spend golden-refresh eval-sql eval-docs load-spec-bands orchestrate orchestrate-resume orchestrate-status results-header ci-local
+.PHONY: up down migrate test-db test lint run load-secom load-uls load-fcc-eas fetch-3gpp chunk-3gpp embed-3gpp eval-smoke docs-mcp sql-mcp llm-spend golden-refresh eval-sql eval-docs load-spec-bands orchestrate orchestrate-resume orchestrate-status api ui results-header ci-local
 
 up:
 	docker compose up -d --wait
@@ -71,6 +71,13 @@ llm-spend:
 
 run:
 	uv run uvicorn rflens.api.main:app --host 127.0.0.1 --port 8000
+
+# The API (127.0.0.1 only, X-API-Key from .env) and the Streamlit UI on top of it.
+api:
+	uv run python -m rflens.api.server
+
+ui:
+	uv run streamlit run src/rflens/ui/app.py
 
 # Store each sql golden question's reference result (needs a running sql-mcp: make sql-mcp).
 golden-refresh:

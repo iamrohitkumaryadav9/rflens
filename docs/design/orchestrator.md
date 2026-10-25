@@ -143,6 +143,12 @@ No LLM, no database. Failure types:
   reverse), it fails; if both directions are asked, both sides must appear. Like
   `unsupported_sql_literal` it is a failure of the SQL, so a surviving one withholds the SQL
   result.
+- `frn_name_grouping` (SQL-side, any route): the SQL groups by `licensee_name` together with
+  `licensee_frn`, or by `licensee_name` alone while `v_uls_licences` (which exposes
+  `licensee_frn`) is queried. One company (one FRN) appears under several name spellings, so such a
+  grouping splits it; the schema comments say to group by `licensee_frn` alone and show
+  `min(licensee_name)`. GROUP BY ordinals and output aliases are resolved, subqueries and CTEs are
+  checked. It is routed like the other SQL-side failures (one SQL retry, then redact).
 - `band_joins` (information, not a failure): the `(spec, band)` literals the SQL filters
   `spec_operating_bands` on.
 
@@ -153,7 +159,7 @@ Which node tries again depends on what failed:
 | failures | next | why |
 |---|---|---|
 | none | finalize | |
-| only SQL-side (`edge_side_mismatch`, `unsupported_sql_literal`) and the SQL has not been retried | **sql_agent**, once, with the failures and the previous SQL in its context | the writer cannot fix a wrong SQL |
+| only SQL-side (`edge_side_mismatch`, `unsupported_sql_literal`, `frn_name_grouping`) and the SQL has not been retried | **sql_agent**, once, with the failures and the previous SQL in its context | the writer cannot fix a wrong SQL |
 | only SQL-side, and the retry did not fix it | redact (the SQL result is withheld) | another writer pass changes nothing |
 | prose (`unsupported_number`, `unsupported_quote`, `invented_unit`, `missing_assumption_wording`, citation failures), or SQL-side mixed with prose | writer, up to `ORCH_MAX_WRITER_RETRIES` (2) | the prose is what can change |
 
@@ -285,6 +291,49 @@ causes were fixed where they arose, and the remaining gap is stated:
 - **What is still not checked:** meaning in general. Only the reference comparison
   (`make eval-e2e`, not built) can say whether an answer is *right*.
 
+## Command line, API and UI (step 4)
+
+**`rflens ask "<question>" [--thread ID] [--ask] [--show-drafts] [--json]`** (console script of
+`rflens.graph.cli`) runs one question to the end in the calling process and prints the answer with
+Sources, the verification summary, and calls and cost per node. When approval is needed it asks at
+the prompt (or, without a terminal, exits 3 and leaves the thread saved for
+`make orchestrate-resume`). `--show-drafts` prints `draft_history` with each draft's failures;
+`make orchestrate` / `orchestrate-resume` print it by themselves when the writer needed more than
+one draft. `--json` prints one JSON document (the thread view below) and sends the gateway's run
+summary to stderr.
+
+**API** (`rflens.api`, FastAPI, `make api`, 127.0.0.1 only; the host is not configurable):
+
+| route | |
+|---|---|
+| `POST /ask` `{question, ask, thread_id?}` | runs the question; returns the thread view: the final answer, or `pending` (the approval payload) |
+| `POST /threads/{id}/resume` `{decision: approve\|cancel\|edit, spec?}` | `edit` is approve with a changed spec filter and needs `spec` (`36.101`, `38.101-1`, `none`); `spec` with another decision is refused; unknown fields are refused |
+| `GET /threads/{id}` | status, badge, plan, answer, sources (text and structured items), verification, `draft_history`, cost per node, ledger run ids |
+| `GET /threads` | the recent threads, newest first |
+| `GET /chunks/{chunk_id}` | one spec chunk through docs-mcp (the UI's source panel); the id is validated against the chunk id format |
+| `GET /health` | open |
+
+Every route but `/health` needs `X-API-Key` equal to `API_KEY` in `.env` (constant-time compare; a
+server without a key answers 503 to everything protected) and counts against a sliding 60 s window
+of `API_RATE_LIMIT_PER_MINUTE` (30) per key (429 with `Retry-After`; wrong keys never reach the
+limiter). Question length is capped at `API_MAX_QUESTION_CHARS` (2000); thread ids match
+`[A-Za-z0-9._-]{1,64}`. 404 unknown thread or chunk, 409 thread exists / not waiting, 422 invalid
+input, 503 for a model-side stop (budget, caps, loop, paid-call block: the thread keeps its last
+checkpoint) or an unreachable data service. Each request opens its own gateway run (its own run id),
+checkpointer connection and graph, and closes them again, so a request that dies leaves a resumable
+thread. The JSON view of a thread is `graph/view.py` (also used by `rflens ask --json`).
+
+**UI** (`rflens.ui`, Streamlit, `make ui`, 127.0.0.1:8502) calls only the API (with the key): question
+box and an "ask for approval" box; when approval is pending, a plan panel (reasons, route, spec,
+bands, `doc_query`, `sql_question`, estimated cost) with approve / edit (spec) / cancel; the answer with
+a verification badge (verified / partial / refused / failed / cancelled / pending approval), sources
+as expanders (the SQL text and rows for [S1]; the clause and text of the chunk, read through the API
+from docs-mcp, for [D1]), the verification details and drafts, calls and cost per node; the sidebar
+lists recent threads that can be reopened and resumed. **Why Streamlit:** it installs and imports
+(with pyarrow) under this machine's Application Control policy (checked in a throwaway venv before
+it was added; streamlit 1.66.1, pyarrow 26.0.0), so no hand-written page was needed. It sends no
+usage statistics (`.streamlit/config.toml`).
+
 ## Build differences (flagged)
 
 - Approval triggers: the step 2 build had only (b), (d) and (e), with the threshold named
@@ -294,3 +343,4 @@ causes were fixed where they arose, and the remaining gap is stated:
 - Mixed questions look up named bands in `spec_operating_bands` instead of searching (the step 2b `doc_query`-only retrieval did not find the expected chunks).
 - The SQL agent of a mixed question is given the original question plus `sql_question` as context (step 2b used `sql_question` alone, which dropped constraints).
 - Retry routing: SQL-side failures go back to the SQL agent once instead of the writer (step 3); the writer retries remain for prose failures.
+- `frn_name_grouping` is a fourth verifier rule on the SQL side (step 4); the CLI, API and UI were added (step 4).

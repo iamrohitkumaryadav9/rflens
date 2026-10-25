@@ -16,9 +16,13 @@ dependencies = [
     "pyyaml==6.0.3",
     "sqlalchemy==2.1.6",
     "sqlglot==30.22.0",
+    "streamlit==1.66.1",
     "ucimlrepo==0.0.7",
     "uvicorn==0.54.0",
 ]
+
+[project.scripts]
+rflens = "rflens.graph.cli:main"
 
 [dependency-groups]
 dev = [

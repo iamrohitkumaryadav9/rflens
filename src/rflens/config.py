@@ -240,6 +240,23 @@ class AgentSettings(BaseSettings):
     agent_max_output_tokens: int = 800
 
 
+class ApiSettings(BaseSettings):
+    """The local HTTP API (rflens.api). API_KEY is required for every route except /health; the
+    API binds to 127.0.0.1 only (not configurable). Env: API_KEY, API_RATE_LIMIT_PER_MINUTE,
+    API_PORT, API_MAX_QUESTION_CHARS."""
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    api_key: SecretStr | None = None
+    api_rate_limit_per_minute: int = 30
+    api_port: int = 8000
+    api_max_question_chars: int = 2000
+
+
+def get_api_settings() -> ApiSettings:
+    return ApiSettings()
+
+
 @lru_cache
 def get_settings() -> Settings:
     return Settings()

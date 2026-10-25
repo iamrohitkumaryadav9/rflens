@@ -276,3 +276,110 @@ def test_without_a_terminal_the_thread_stays_saved_at_the_approval_step(
     )
     assert done.returncode == 3 and "stays saved at the approval step" in done.stderr
     assert checkpoint_count(thread) >= 1
+
+
+# --- rflens ask: the one-shot command -----------------------------------------------------------
+
+BAD = {"answer": "It was measured 777 times [S1]."}
+
+
+def ask_cli(args: list[str], env: dict[str, str]) -> subprocess.CompletedProcess:
+    return run_cli(["ask", *args], env)
+
+
+def test_ask_prints_the_answer_sources_verification_and_cost_per_node(
+    sql_mcp_url, thread, tmp_path
+) -> None:
+    env = env_for([PLAN, SQL, ANSWER], sql_mcp_url, tmp_path, "ask")
+    done = ask_cli([f"What is forty one plus one? {thread}", "--thread", thread], env)
+    assert done.returncode == 0, done.stdout + done.stderr
+    out = done.stdout
+    assert f"thread {thread}" in out and "status: answered" in out
+    assert "The answer is 42 [S1]." in out and "Sources:" in out and "[S1] sql-mcp query #" in out
+    assert "verification: ok=True" in out
+    for node in ("planner", "sql_agent", "writer"):
+        assert f"  {node}" in out and "calls=1" in out
+    assert "writer draft" not in out  # one clean draft: nothing to explain
+    assert [p for _, p in ledger(thread)] == ["planner", "sql-agent", "writer"]
+
+
+def test_ask_show_drafts_prints_every_draft_with_its_failures(
+    sql_mcp_url, thread, tmp_path
+) -> None:
+    env = env_for([PLAN, SQL, BAD, ANSWER], sql_mcp_url, tmp_path, "drafts")
+    question = f"What is forty one plus one? {thread}"
+    done = ask_cli([question, "--thread", thread, "--show-drafts"], env)
+    assert done.returncode == 0, done.stdout + done.stderr
+    out = done.stdout
+    assert "--- writer draft 1 (verified ok: False) ---" in out
+    assert "It was measured 777 times [S1]." in out and "failure: unsupported_number" in out
+    assert "--- writer draft 2 (verified ok: True) ---" in out and "status: answered" in out
+
+
+def test_drafts_are_shown_by_default_only_when_the_writer_needed_more_than_one(
+    sql_mcp_url, thread, tmp_path
+) -> None:
+    env = env_for([PLAN, SQL, BAD, ANSWER], sql_mcp_url, tmp_path, "more")
+    done = ask_cli([f"What is forty one plus one? {thread}", "--thread", thread], env)
+    assert "--- writer draft 1" in done.stdout and "--- writer draft 2" in done.stdout
+
+
+def test_ask_json_prints_one_document_and_keeps_the_rest_on_stderr(
+    sql_mcp_url, thread, tmp_path
+) -> None:
+    env = env_for([PLAN, SQL, BAD, ANSWER], sql_mcp_url, tmp_path, "json")
+    question = f"What is forty one plus one? {thread}"
+    plain = ask_cli([question, "--thread", thread, "--json"], env)
+    assert plain.returncode == 0, plain.stdout + plain.stderr
+    doc = json.loads(plain.stdout)  # nothing but the document on stdout
+    assert doc["thread_id"] == thread and doc["status"] == "answered" and doc["badge"] == "verified"
+    assert doc["answer"] == "The answer is 42 [S1]." and doc["sources_text"].startswith("[S1]")
+    assert doc["cost"]["calls"] == 4 and doc["verification"]["ok"]
+    assert doc["source_items"][0]["tag"] == "S1" and "draft_history" not in doc
+    assert "LLM run" in plain.stderr  # the gateway's run summary goes to stderr
+
+    env2 = env_for([PLAN, SQL, BAD, ANSWER], sql_mcp_url, tmp_path, "json2")
+    with_drafts = ask_cli([question, "--thread", thread + "-b", "--json", "--show-drafts"], env2)
+    assert [d["ok"] for d in json.loads(with_drafts.stdout)["draft_history"]] == [False, True]
+    with open_checkpointer() as saver:
+        saver.delete_thread(thread + "-b")
+    with get_engine().begin() as c:
+        c.execute(text("DELETE FROM llm_calls WHERE question_id = :q"), {"q": thread + "-b"})
+
+
+def test_ask_that_needs_approval_without_a_terminal_leaves_the_thread_saved(
+    sql_mcp_url, thread, tmp_path
+) -> None:
+    env = env_for([PLAN], sql_mcp_url, tmp_path, "pending")
+    done = subprocess.run(
+        [*CLI, "ask", f"What is forty one plus one? {thread}", "--thread", thread, "--ask"],
+        cwd=ROOT,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert done.returncode == 3 and "waiting for approval" in done.stderr
+    assert "ask: ASK is set" in done.stdout
+    assert checkpoint_count(thread) >= 1
+    resumed = run_cli(
+        ["resume", "--thread", thread, "--decision", "approve"],
+        env_for([SQL, ANSWER], sql_mcp_url, tmp_path, "pending2"),
+    )
+    assert "status: answered" in resumed.stdout
+
+
+def test_a_thread_id_that_exists_is_not_asked_again(sql_mcp_url, thread, tmp_path) -> None:
+    env = env_for([PLAN, SQL, ANSWER], sql_mcp_url, tmp_path, "twice")
+    q = f"What is forty one plus one? {thread}"
+    assert ask_cli([q, "--thread", thread], env).returncode == 0
+    again = ask_cli([q, "--thread", thread], env)
+    assert again.returncode == 2 and "already exists" in again.stderr
+
+
+def test_the_rflens_command_is_installed_from_the_project_scripts() -> None:
+    import tomllib
+
+    scripts = tomllib.loads((ROOT / "pyproject.toml").read_text("utf-8"))["project"]["scripts"]
+    assert scripts == {"rflens": "rflens.graph.cli:main"}

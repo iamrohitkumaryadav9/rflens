@@ -333,3 +333,77 @@ def test_no_direction_word_or_no_band_table_means_no_side_check() -> None:
         chunks=[],
     )
     assert sql_route["ok"]
+
+
+# --- frn_name_grouping: companies are identified by licensee_frn ----------------------------
+
+
+def frn_check(executed: str, route: str = "sql"):
+    sql = sql_result(rows=[["x", 1]], columns=["licensee", "n"], executed=executed)
+    return verify("There is one row [S1].", question="Who?", route=route, sql=sql, chunks=[])
+
+
+GOOD_GROUPING = (
+    "SELECT licensee_frn, min(licensee_name) AS licensee, count(*) AS n FROM v_uls_licences "
+    "GROUP BY licensee_frn ORDER BY n DESC LIMIT 5"
+)
+
+
+def test_grouping_by_frn_alone_passes() -> None:
+    assert frn_check(GOOD_GROUPING)["ok"]
+
+
+def test_grouping_by_name_together_with_frn_fails() -> None:
+    r = frn_check(
+        GOOD_GROUPING.replace("GROUP BY licensee_frn", "GROUP BY licensee_frn, licensee_name")
+    )
+    assert kinds(r) == ["frn_name_grouping"]
+    assert "together with licensee_frn" in r["failures"][0]["detail"]
+
+
+def test_grouping_by_name_alone_fails_when_the_frn_is_available() -> None:
+    r = frn_check("SELECT licensee_name, count(*) AS n FROM v_uls_licences GROUP BY licensee_name")
+    assert kinds(r) == ["frn_name_grouping"]
+    assert "although licensee_frn is available" in r["failures"][0]["detail"]
+
+
+def test_ordinals_aliases_and_qualified_names_are_resolved() -> None:
+    assert kinds(
+        frn_check("SELECT l.licensee_name, count(*) FROM v_uls_licences l GROUP BY 1")
+    ) == ["frn_name_grouping"]
+    assert kinds(
+        frn_check(
+            "SELECT l.licensee_name AS company, count(*) FROM v_uls_licences l GROUP BY company"
+        )
+    ) == ["frn_name_grouping"]
+    assert kinds(
+        frn_check(
+            "SELECT l.licensee_frn, l.licensee_name, count(*) FROM v_uls_licences l GROUP BY 1, 2"
+        )
+    ) == ["frn_name_grouping"]
+    assert frn_check(
+        "SELECT l.licensee_frn, min(l.licensee_name), count(*) FROM v_uls_licences l GROUP BY 1"
+    )["ok"]
+
+
+def test_a_subquery_or_cte_is_checked_too() -> None:
+    sql = (
+        "WITH c AS (SELECT licensee_name, count(*) AS n FROM v_uls_licences "
+        "GROUP BY licensee_name) "
+        "SELECT * FROM c"
+    )
+    assert kinds(frn_check(sql)) == ["frn_name_grouping"]
+
+
+def test_other_groupings_and_other_relations_are_not_touched() -> None:
+    assert frn_check("SELECT license_status, count(*) FROM v_uls_licences GROUP BY license_status")[
+        "ok"
+    ]
+    assert frn_check("SELECT firm_name, count(*) FROM fcc_test_firms GROUP BY firm_name")["ok"]
+    assert frn_check("SELECT licensee_name FROM v_uls_licences LIMIT 3")["ok"]  # no grouping
+    assert frn_check("not sql at all (")["ok"]
+
+
+def test_the_rule_applies_to_mixed_questions_too() -> None:
+    sql = "SELECT licensee_name, count(*) FROM v_uls_licences GROUP BY licensee_name"
+    assert kinds(frn_check(sql, route="mixed")) == ["frn_name_grouping"]

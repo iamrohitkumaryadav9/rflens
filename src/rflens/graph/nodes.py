@@ -48,7 +48,7 @@ ROUTES = ("sql", "doc", "mixed", "refuse")
 WRITER_EST_OVERHEAD_TOKENS = 700
 CAP_NOTE = "per-question call cap"
 # failures that come from the SQL itself: the SQL result is withheld when one is left after retries
-SQL_FAILURES = ("unsupported_sql_literal", "edge_side_mismatch")
+SQL_FAILURES = ("unsupported_sql_literal", "edge_side_mismatch", "frn_name_grouping")
 MAX_SQL_RETRIES = 1  # a SQL-side failure sends the question back to the SQL agent once
 
 

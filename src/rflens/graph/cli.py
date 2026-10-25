@@ -8,6 +8,9 @@
 the process can be killed at that prompt and the thread resumed later (`resume`). The thread id is
 the question id: the ledger (`llm_calls`) and the checkpoints are looked up by it.
 
+One-shot: `rflens ask "<question>" [--thread ID] [--ask] [--show-drafts] [--json]` runs a question
+to the end in this process (asking at the prompt when approval is needed and a terminal exists).
+
 Offline: with LLM_PROVIDER=fake and RFLENS_FAKE_SCRIPT=<json file with a list of answers> the
 model is scripted (tests and demos without a key); the MCP servers are still spoken to over HTTP.
 """
@@ -16,6 +19,7 @@ import argparse
 import json
 import os
 import sys
+import uuid
 from typing import Any
 
 from sqlalchemy import text
@@ -37,6 +41,7 @@ from rflens.graph.app import (
 from rflens.graph.docs_tools import DocsMcpTools
 from rflens.graph.nodes import GraphDeps
 from rflens.graph.spec_rules import SPECS
+from rflens.graph.view import thread_view
 from rflens.llm.base import LLMError
 from rflens.llm.fake import FakeProvider
 from rflens.llm.gateway import Gateway, build_gateway
@@ -45,8 +50,11 @@ PROMPT = "approve / edit / cancel [a/e/c]: "
 NODE_OF_PURPOSE = {"planner": "planner", "sql-agent": "sql_agent", "writer": "writer"}
 
 
-def make_gateway() -> Gateway:
+def make_gateway(*, quiet: bool = False) -> Gateway:
+    """`quiet` sends the gateway's run summary to stderr (so --json output stays parseable)."""
     gateway = build_gateway()
+    if quiet:
+        gateway.emit = lambda line: print(line, file=sys.stderr)
     script = os.environ.get("RFLENS_FAKE_SCRIPT")
     if script and gateway.settings.llm_provider == "fake":
         with open(script, encoding="utf-8") as f:
@@ -120,7 +128,18 @@ def print_reference(state: dict[str, Any]) -> None:
     print(f"  reference: {golden.reference_result.columns} {golden.reference_result.rows[:6]}")
 
 
-def print_outcome(outcome: Outcome) -> None:
+def print_drafts(state: dict[str, Any]) -> None:
+    for entry in state.get("draft_history") or []:
+        print(f"\n--- writer draft {entry['attempt']} (verified ok: {entry['ok']}) ---")
+        print(entry["draft"])
+        for failure in entry["failures"]:
+            print(
+                f"  failure: {failure['type']} (sentence {failure['sentence']}): "
+                f"{failure['detail']}"
+            )
+
+
+def print_outcome(outcome: Outcome, *, show_drafts: bool = False) -> None:
     state = outcome.state
     print(f"\nstatus: {outcome.status}   thread: {outcome.question_id}")
     sql = state.get("sql")
@@ -131,10 +150,13 @@ def print_outcome(outcome: Outcome) -> None:
     verification = state.get("verification") or {}
     print(f"\nverification: ok={verification.get('ok')} failures={verification.get('failures')}")
     print_reference(state)
+    # the drafts are shown on request, and always when the writer needed more than one
+    if show_drafts or len(state.get("draft_history") or []) > 1:
+        print_drafts(state)
     print_nodes(outcome.stats)
 
 
-# --- the three commands ---------------------------------------------------------------------------
+# --- the commands ---------------------------------------------------------------------------
 
 
 def prompt_decision(proposed_spec: str | None) -> dict[str, Any] | None:
@@ -195,6 +217,46 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ask(args: argparse.Namespace) -> int:
+    """One-shot: plan, (approve), run, print. With --json the only stdout is one JSON document."""
+    thread = args.thread or f"ask-{uuid.uuid4().hex[:8]}"
+    gateway = make_gateway(quiet=args.json)
+    with gateway.run("ask") as run, open_checkpointer() as saver:
+        graph = build_graph(make_deps(run, ask=args.ask), saver)
+        if graph.get_state(thread_config(thread)).values:
+            print(f"thread {thread!r} already exists: pick another --thread", file=sys.stderr)
+            return 2
+        outcome = start_thread(graph, args.question, thread)
+        if outcome.interrupt is not None:
+            if args.json or not sys.stdin.isatty():
+                pending = thread_view(thread, outcome.state, outcome.interrupt, ("approval",))
+                if args.json:
+                    print(json.dumps(pending, indent=2, default=str))
+                else:
+                    print_plan(outcome.state, gateway)
+                print(
+                    f"waiting for approval; resume with: make orchestrate-resume THREAD={thread}",
+                    file=sys.stderr,
+                )
+                return 3
+            print_plan(outcome.state, gateway)
+            decision = prompt_decision(outcome.interrupt.get("proposed_spec"))
+            if decision is None:
+                print(
+                    f"waiting for approval; resume with: make orchestrate-resume THREAD={thread}",
+                    file=sys.stderr,
+                )
+                return 3
+            outcome = continue_thread(graph, thread, decision)
+        if args.json:
+            view = thread_view(thread, outcome.state, None, (), drafts=args.show_drafts)
+            print(json.dumps(view, indent=2, default=str))
+        else:
+            print(f"thread {thread}")
+            print_outcome(outcome, show_drafts=args.show_drafts)
+    return 0
+
+
 def cmd_resume(args: argparse.Namespace) -> int:
     decision: dict[str, Any] = {"approve": args.decision == "approve"}
     if args.spec:
@@ -208,7 +270,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
             return 2
         print(f"thread {args.thread}   pid {os.getpid()}   next: {snapshot.next or 'finished'}")
         outcome = continue_thread(graph, args.thread, decision)
-        print_outcome(outcome)
+        print_outcome(outcome, show_drafts=args.show_drafts)
     return 0
 
 
@@ -274,9 +336,17 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--thread", required=True)
     run.add_argument("--ask", action="store_true", help="always ask for approval (ASK=1)")
     run.set_defaults(func=cmd_run)
+    ask = sub.add_parser("ask", help="run one question to the end in this process")
+    ask.add_argument("question")
+    ask.add_argument("--thread", help="thread id (default: a new ask-<hex> id)")
+    ask.add_argument("--ask", action="store_true", help="ask for approval first (ASK=1)")
+    ask.add_argument("--show-drafts", action="store_true", help="print every writer draft")
+    ask.add_argument("--json", action="store_true", help="print one JSON document")
+    ask.set_defaults(func=cmd_ask)
     resume = sub.add_parser("resume", help="continue a saved thread in this (new) process")
     resume.add_argument("--thread", required=True)
     resume.add_argument("--decision", choices=["approve", "cancel"], default="approve")
+    resume.add_argument("--show-drafts", action="store_true", help="print every writer draft")
     resume.add_argument("--spec", help="36.101, 38.101-1 or none (overrides the proposed spec)")
     resume.set_defaults(func=cmd_resume)
     status = sub.add_parser("status", help="checkpoint and ledger calls of a thread")

@@ -57,6 +57,8 @@ src/rflens/ingest/        # secom.py (UCI SECOM), uls.py (FCC ULS, one service p
 src/rflens/retrieval/     # embedder.py (Ollama), index.py (load + embed chunks), hybrid.py
                           # (vector + keyword + RRF), embed_3gpp.py, eval_smoke.py
 eval/                     # golden.yaml (all question types), RESULTS.md (eval run log + golden counts)
+src/rflens/api/           # FastAPI: main.py (routes), service.py (orchestrator per request), security.py, server.py
+src/rflens/ui/            # Streamlit UI on the API (client.py, app.py)
 src/rflens/graph/         # orchestrator (LangGraph): state, planner/approval/doc/sql/writer nodes, verifier
 src/rflens/mcp/           # docs_server.py: docs-mcp (search_docs, get_chunk), make docs-mcp, port 8101
                           # sql_server.py + sql_guard.py: sql-mcp (list_tables, describe_table,
@@ -347,6 +349,16 @@ data/                     # gitignored; raw downloads (data/raw/secom, data/raw/
     the pid the program prints (on Windows the venv launcher is a separate process).
     `scripts/demo_kill_resume.py` scripts the whole demo; offline it runs with
     `LLM_PROVIDER=fake RFLENS_FAKE_SCRIPT=<json>` (tests/test_orchestrate_cli.py).
+  - **CLI / API / UI (step 4).** `rflens ask "<question>" [--thread ID] [--ask] [--show-drafts]
+    [--json]` (one shot). `make api` serves the FastAPI app on 127.0.0.1 only (`POST /ask`,
+    `POST /threads/{id}/resume`, `GET /threads/{id}`, `GET /threads`, `GET /chunks/{id}`, open
+    `GET /health`); every other route needs the `X-API-Key` header = `API_KEY` in `.env` and is
+    limited to `API_RATE_LIMIT_PER_MINUTE` (30) per key. `make ui` starts the Streamlit UI
+    (127.0.0.1:8502, usage statistics off in `.streamlit/config.toml`; `API_URL` overrides the API
+    address) which only calls the API. Streamlit 1.66.1 / pyarrow 26.0.0 import under this
+    machine's Application Control policy. Details: docs/design/orchestrator.md. The verifier also
+    has `frn_name_grouping` (grouping companies by name, alone or together with the FRN, is a SQL-side
+    failure: one SQL retry, then redact).
   - Live smoke (`scripts/graph_smoke.py`, approval auto): sql-01 and doc-02 answered and verified.
     After the fixes mixed-01 (top 5 licensees, band 5 uplink) and mixed-02 (116,525) were
     `answered`, verified and equal to the golden reference under the relaxed compare, each SQL
