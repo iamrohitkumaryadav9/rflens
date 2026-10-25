@@ -1,7 +1,7 @@
 """make llm-spend: what the LLM gateway has spent, from the llm_calls ledger."""
 
 from rflens.config import get_llm_settings
-from rflens.db import get_engine
+from rflens.db import get_ledger_engine
 from rflens.llm.ledger import Ledger, format_when
 
 
@@ -35,7 +35,7 @@ def render(ledger: Ledger) -> str:
 
 def main() -> None:
     s = get_llm_settings()
-    print(render(Ledger(get_engine(), s.llm_budget_usd, s.llm_usd_to_inr)))
+    print(render(Ledger(get_ledger_engine(), s.llm_budget_usd, s.llm_usd_to_inr)))
 
 
 if __name__ == "__main__":

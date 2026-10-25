@@ -1,4 +1,4 @@
-.PHONY: up down migrate test-db test lint run load-secom load-uls load-fcc-eas fetch-3gpp chunk-3gpp embed-3gpp eval-smoke docs-mcp sql-mcp llm-spend golden-refresh eval-sql eval-docs results-header ci-local
+.PHONY: up down migrate test-db test lint run load-secom load-uls load-fcc-eas fetch-3gpp chunk-3gpp embed-3gpp eval-smoke docs-mcp sql-mcp llm-spend golden-refresh eval-sql eval-docs load-spec-bands results-header ci-local
 
 up:
 	docker compose up -d --wait
@@ -28,6 +28,10 @@ load-uls:
 
 load-fcc-eas:
 	uv run python -m rflens.ingest.fcc_eas
+
+# Parse the operating-band tables of the spec chunks into spec_operating_bands (needs chunk-3gpp output).
+load-spec-bands:
+	uv run python -m rflens.ingest.spec_bands --load
 
 fetch-3gpp:
 	uv run python -m rflens.ingest.spec_fetch

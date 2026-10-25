@@ -22,6 +22,7 @@ class SqlMcpUnavailable(Exception):
 @dataclass(frozen=True)
 class QueryOutcome:
     ok: bool
+    query_id: int | None = None  # the call's row in sql_query_log
     columns: list[str] = field(default_factory=list)
     rows: list[list[Any]] = field(default_factory=list)
     row_count: int = 0
@@ -43,6 +44,7 @@ class SqlMcpTools:
     def __init__(self, target: Any):
         self.target = target
         self._schema: str | None = None
+        self._described: list[dict] = []
 
     def _call(self, tool: str, arguments: dict) -> Any:
         async def run():
@@ -75,6 +77,7 @@ class SqlMcpTools:
             blocks = []
             for table in self.list_tables():
                 d = self.describe_table(table["name"])
+                self._described.append(d)
                 lines = [f"== {d['name']} ({d['kind']}) ==", d["description"] or ""]
                 lines += [
                     f"  {c['name']} {c['type']}"
@@ -84,6 +87,32 @@ class SqlMcpTools:
                 blocks.append("\n".join(lines))
             self._schema = "\n\n".join(blocks)
         return self._schema
+
+    def column_notes(self) -> dict[str, dict[str, bool]]:
+        """Per column name: whether its comment says the unit is UNKNOWN or ASSUMED (the schema
+        comments are the single source of unit caveats). Names shared by several relations merge."""
+        self.schema_context()
+        notes: dict[str, dict[str, bool]] = {}
+        for relation in self._described:
+            for column in relation["columns"]:
+                text = column["description"] or ""
+                entry = notes.setdefault(column["name"], {"unknown": False, "assumed": False})
+                entry["unknown"] = entry["unknown"] or "UNKNOWN" in text
+                entry["assumed"] = entry["assumed"] or "ASSUMED" in text
+        return notes
+
+    def column_comments(self) -> dict[str, str]:
+        """Per column name, the schema comments joined (names shared by relations merge)."""
+        self.schema_context()
+        comments: dict[str, str] = {}
+        for relation in self._described:
+            for column in relation["columns"]:
+                text = column["description"] or ""
+                if text and text not in comments.get(column["name"], ""):
+                    comments[column["name"]] = (
+                        comments.get(column["name"], "") + " " + text
+                    ).strip()
+        return comments
 
     def run_query(self, sql: str, question: str) -> QueryOutcome:
         """Run one SELECT through sql-mcp; `question` lands in sql_query_log next to the SQL."""
@@ -101,6 +130,7 @@ class SqlMcpTools:
         d = result.structured_content
         return QueryOutcome(
             ok=True,
+            query_id=d.get("query_id"),
             columns=d["columns"],
             rows=d["rows"],
             row_count=d["row_count"],

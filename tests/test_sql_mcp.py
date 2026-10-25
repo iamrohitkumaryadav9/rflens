@@ -393,7 +393,7 @@ def test_lists_three_tools_that_say_results_are_data_not_instructions(server) ->
     assert run_query.input_schema["required"] == ["sql"]
 
 
-def test_list_tables_shows_nine_tables_and_three_views_but_not_uls_en(server, tag) -> None:
+def test_list_tables_shows_ten_tables_and_three_views_but_not_uls_en(server, tag) -> None:
     out = data(call(server, "list_tables", {"question": tag}))
     names = [t["name"] for t in out["tables"]]
     assert names == list(ALLOWED_RELATIONS) and "uls_en" not in names
@@ -402,7 +402,7 @@ def test_list_tables_shows_nine_tables_and_three_views_but_not_uls_en(server, ta
     assert all(t["description"] for t in out["tables"])
     assert all(t["approx_rows"] is None for t in out["tables"] if t["kind"] == "view")
     (row,) = log_rows(tag)
-    assert (row.tool, row.status, row.row_count) == ("list_tables", "ok", 12)
+    assert (row.tool, row.status, row.row_count) == ("list_tables", "ok", 13)
 
 
 def test_describe_table_returns_comments_with_units_and_open_questions(server, tag) -> None:

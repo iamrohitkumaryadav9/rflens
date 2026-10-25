@@ -47,6 +47,8 @@ class AgentResult:
     cost_usd: float = 0.0
     run_id: str = ""
     plan_cost: float | None = None
+    query_id: int | None = None  # the successful query's row in sql_query_log
+    executed_sql: str | None = None
 
 
 def tables_in(sql: str, fallback: list[str]) -> list[str]:
@@ -76,7 +78,10 @@ def answer_question(
     purpose: str = "sql-agent",
     max_corrections: int = MAX_CORRECTIONS,
     max_output_tokens: int = 800,
+    context: str | None = None,
 ) -> AgentResult:
+    """`context` is extra text for the model only (for example facts taken from a specification
+    chunk): it is appended to the user message and is not part of the question that is logged."""
     before = (
         run.guard.per_question[question_id],
         run.input_tokens,
@@ -86,7 +91,11 @@ def answer_question(
     )
     result = AgentResult(question_id=question_id, question=question, status="failed")
     result.run_id = run.run_id
-    messages = [Message.system(build_system_prompt(tools.schema_context())), Message.user(question)]
+    user_text = question if not context else f"{question}\n\n{context}"
+    messages = [
+        Message.system(build_system_prompt(tools.schema_context())),
+        Message.user(user_text),
+    ]
     try:
         _converse(result, messages, run, tools, purpose, max_corrections, max_output_tokens)
     finally:
@@ -178,6 +187,7 @@ def _fill_answered(result: AgentResult, answer: dict, sql: str, outcome: QueryOu
     result.columns, result.rows = outcome.columns, outcome.rows
     result.row_count, result.truncated = outcome.row_count, outcome.truncated
     result.plan_cost = outcome.plan_cost
+    result.query_id, result.executed_sql = outcome.query_id, outcome.executed_sql
     result.tables_used = tables_in(sql, answer.get("tables_used", []))
     result.notes += [a for a in answer.get("assumptions", []) if a]
     if outcome.truncated:

@@ -4,12 +4,18 @@ from functools import lru_cache
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
-from rflens.config import get_settings
+from rflens.config import get_llm_settings, get_settings
 
 
 @lru_cache
 def get_engine() -> Engine:
     return create_engine(get_settings().database_url, pool_pre_ping=True)
+
+
+@lru_cache
+def get_ledger_engine() -> Engine:
+    """The LLM ledger's connection: role rflens_llm_ledger, rights on llm_calls only."""
+    return create_engine(get_llm_settings().ledger_url(), pool_pre_ping=True)
 
 
 def analyze(tables: Iterable[str]) -> None:

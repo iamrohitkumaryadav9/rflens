@@ -34,6 +34,7 @@ ALLOWED_TABLES = (
     "uls_file_counts",
     "fcc_grantees",
     "fcc_test_firms",
+    "spec_operating_bands",
 )
 ALLOWED_VIEWS = ("v_uls_licences", "v_uls_frequencies", "v_secom_values")
 ALLOWED_RELATIONS = ALLOWED_TABLES + ALLOWED_VIEWS

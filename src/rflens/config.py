@@ -149,6 +149,17 @@ class LlmSettings(BaseSettings):
     llm_max_calls_per_minute: int = 20
     llm_allow_paid: bool = False
     llm_prices_file: str = "config/llm_prices.yaml"
+    # The ledger writes llm_calls as this role (migration 0012): rights on that table only.
+    llm_ledger_user: str = "rflens_llm_ledger"
+    llm_ledger_password: SecretStr | None = None
+
+    def ledger_url(self) -> URL:
+        """DATABASE_URL with the credentials of the ledger role."""
+        if self.llm_ledger_password is None:
+            raise ValueError("LLM_LEDGER_PASSWORD is not set (the ledger role's password)")
+        return make_url(get_settings().database_url).set(
+            username=self.llm_ledger_user, password=self.llm_ledger_password.get_secret_value()
+        )
 
     @model_validator(mode="after")
     def _check(self) -> "LlmSettings":
@@ -171,6 +182,50 @@ class LlmSettings(BaseSettings):
 
     def fallback_providers(self) -> list[str]:
         return [p.strip() for p in self.llm_fallback.split(",") if p.strip()]
+
+
+class CheckpointerSettings(BaseSettings):
+    """The orchestrator's checkpoint store: schema `checkpoints`, role rflens_checkpointer
+    (migration 0012). Env: CHECKPOINTER_PASSWORD (required), CHECKPOINTER_USER."""
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    checkpointer_password: SecretStr
+    checkpointer_user: str = "rflens_checkpointer"
+
+    def sa_url(self) -> URL:
+        """DATABASE_URL with the checkpointer role's credentials (SQLAlchemy form)."""
+        return make_url(get_settings().database_url).set(
+            username=self.checkpointer_user,
+            password=self.checkpointer_password.get_secret_value(),
+        )
+
+    def conninfo(self) -> str:
+        """A libpq URI for psycopg (the role's search_path is set on the role itself)."""
+        return self.sa_url().set(drivername="postgresql").render_as_string(hide_password=False)
+
+
+class GraphSettings(BaseSettings):
+    """The orchestrator graph. All env-overridable (ORCH_*)."""
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    # One question spans the whole graph run: planner, SQL agent and writer share this cap.
+    orch_max_calls_per_question: int = 10
+    # Approval triggers (docs/design/orchestrator.md): ASK=1 always asks; the planned worst case
+    # above APPROVAL_COST_USD (USD) asks.
+    ask: bool = False
+    approval_cost_usd: float = 0.05
+    orch_retrieval_mode: Literal["vector", "keyword", "hybrid"] = "vector"
+    orch_doc_k: int = 5
+    orch_doc_full_chunks: int = 3  # chunks fetched in full for the writer
+    orch_chunk_chars: int = 3600  # per chunk given to the writer
+    orch_evidence_chars: int = 9000  # all chunk text given to the writer
+    orch_max_state_rows: int = 50  # SQL rows kept in the checkpointed state
+    orch_writer_rows: int = 25  # SQL rows shown to the writer
+    orch_planner_max_tokens: int = 300
+    orch_writer_max_tokens: int = 700
+    orch_max_writer_retries: int = 2
 
 
 class AgentSettings(BaseSettings):
@@ -212,3 +267,11 @@ def get_llm_settings() -> LlmSettings:
 
 def get_agent_settings() -> AgentSettings:
     return AgentSettings()
+
+
+def get_checkpointer_settings() -> CheckpointerSettings:
+    return CheckpointerSettings()
+
+
+def get_graph_settings() -> GraphSettings:
+    return GraphSettings()

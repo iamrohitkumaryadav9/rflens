@@ -161,6 +161,21 @@ class Ledger:
 
     # --- reads ------------------------------------------------------------------------------------
 
+    def question_attempts(self, question_id: str) -> int:
+        """Attempts already made for a question, in any process: provider calls that were made or
+        reserved (pending, ok, error); budget-blocked rows never reached a provider. A restarted
+        run seeds its per-question counter from this."""
+        with self.engine.connect() as conn:
+            return int(
+                conn.execute(
+                    text(
+                        "SELECT count(*) FROM llm_calls WHERE question_id = :q "
+                        "AND status IN ('pending', 'ok', 'error')"
+                    ),
+                    {"q": question_id},
+                ).scalar_one()
+            )
+
     def total_usd(self) -> float:
         with self.engine.connect() as conn:
             return float(

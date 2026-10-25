@@ -119,6 +119,14 @@ class LLMRun:
         s = self.gateway.settings
         self.guard = RunGuard(self.run_id, s.llm_max_calls_per_run, s.llm_max_calls_per_question)
 
+    def seed_question(self, question_id: str) -> int:
+        """Start this run's counter for `question_id` at the attempts the ledger already holds,
+        so a question resumed in a new process cannot exceed its cap by restarting. Returns the
+        count seeded."""
+        already = self.gateway.ledger.question_attempts(question_id)
+        self.guard.per_question[question_id] = max(self.guard.per_question[question_id], already)
+        return already
+
     def __enter__(self) -> "LLMRun":
         return self
 
@@ -294,7 +302,7 @@ def build_gateway(settings: LlmSettings | None = None) -> Gateway:
     """The real gateway: providers from settings, the ledger on DATABASE_URL, the process-wide
     rate limiter."""
     global _RATE_LIMITER
-    from rflens.db import get_engine
+    from rflens.db import get_ledger_engine
     from rflens.llm.fake import FakeProvider
     from rflens.llm.gemini import GeminiProvider
     from rflens.llm.ollama import OllamaProvider
@@ -312,7 +320,7 @@ def build_gateway(settings: LlmSettings | None = None) -> Gateway:
     return Gateway(
         s,
         providers,
-        Ledger(get_engine(), s.llm_budget_usd, s.llm_usd_to_inr),
+        Ledger(get_ledger_engine(), s.llm_budget_usd, s.llm_usd_to_inr),
         Pricing.load(_repo_path(s.llm_prices_file), s.llm_usd_to_inr),
         rate_limiter=_RATE_LIMITER,
     )

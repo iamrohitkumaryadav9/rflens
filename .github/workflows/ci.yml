@@ -27,6 +27,8 @@ jobs:
       DOCS_READER_PASSWORD: ci-only-docs-reader-password
       SQL_READER_PASSWORD: ci-only-sql-reader-password
       SQL_LOGGER_PASSWORD: ci-only-sql-logger-password
+      CHECKPOINTER_PASSWORD: ci-only-checkpointer-password
+      LLM_LEDGER_PASSWORD: ci-only-llm-ledger-password
     steps:
       # Both actions run on Node 24 (the v4 / v6 majors ran on Node 20, which GitHub deprecates).
       # checkout: latest release v7.0.1 (2026-07-20), floating major tag v7.

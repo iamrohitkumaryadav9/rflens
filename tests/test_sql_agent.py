@@ -134,7 +134,7 @@ def test_the_prompt_carries_rules_examples_schema_comments_and_the_answer_schema
     assert [m.role for m in messages] == ["system", "user"] and messages[1].content == qtext
     assert schema == ANSWER_SCHEMA
     assert RULES in system and "Never guess or invent units" in system
-    assert system.count("\nQuestion: ") == len(EXAMPLES) == 6
+    assert system.count("\nQuestion: ") == len(EXAMPLES) == 7
     for relation in ALLOWED_RELATIONS:
         assert f"== {relation} (" in system
     assert "== uls_en" not in system  # not exposed by sql-mcp, so not in the context
@@ -324,7 +324,7 @@ def test_calls_tokens_and_cost_are_counted_per_question_within_one_run(tools, qt
 
 def test_examples_are_valid_distinct_from_the_golden_set_and_balanced() -> None:
     golden = load_golden()
-    assert sum(1 for _, a in EXAMPLES if a["refuse"]) == 2 and len(EXAMPLES) == 6
+    assert sum(1 for _, a in EXAMPLES if a["refuse"]) == 2 and len(EXAMPLES) == 7
     prompt = build_system_prompt("schema")
     for q in golden:
         assert q.question not in prompt, f"golden question {q.id} appears in the prompt"

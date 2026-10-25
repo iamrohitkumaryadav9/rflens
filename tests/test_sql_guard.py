@@ -180,8 +180,10 @@ def test_the_three_explicit_uls_en_cases_name_the_table() -> None:
         assert rejected.value.code == "table_not_allowed" and "uls_en" in rejected.value.message
 
 
-def test_the_allow_list_is_nine_tables_and_three_views_without_uls_en() -> None:
-    assert len(ALLOWED_TABLES) == 9 and len(ALLOWED_VIEWS) == 3
+def test_the_allow_list_is_ten_tables_and_three_views_without_uls_en() -> None:
+    # spec_operating_bands (migration 0013) is the tenth table
+    assert len(ALLOWED_TABLES) == 10 and "spec_operating_bands" in ALLOWED_TABLES
+    assert len(ALLOWED_VIEWS) == 3
     assert "uls_en" not in ALLOWED_RELATIONS
     for hidden in ("chunks", "documents", "alembic_version", "sql_query_log"):
         assert hidden not in ALLOWED_RELATIONS

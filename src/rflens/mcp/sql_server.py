@@ -112,6 +112,7 @@ class DescribeResponse(BaseModel):
 
 
 class QueryResponse(BaseModel):
+    query_id: int = Field(description="this call's row id in sql_query_log: cite it")
     columns: list[str]
     rows: list[list[Any]]
     row_count: int
@@ -136,7 +137,7 @@ def _jsonable(value: Any) -> Any:
     if isinstance(value, bytes | memoryview):
         return bytes(value).hex()
     if isinstance(value, str) and len(value) > MAX_CELL_CHARS:
-        return value[:MAX_CELL_CHARS] + "…[truncated]"
+        return value[:MAX_CELL_CHARS] + "â€¦[truncated]"
     if isinstance(value, float) and value != value:
         return None  # NaN is not JSON
     return value
@@ -168,18 +169,24 @@ class QueryLog:
         row_count: int | None = None,
         duration_ms: int | None = None,
         reason: str | None = None,
-    ) -> None:
+    ) -> int:
+        """Write one row and return its id. The id is taken from the table's sequence first
+        (the logger role may use the sequence but may not SELECT, so INSERT ... RETURNING is not
+        available to it)."""
         try:
             with self._connect() as conn:
+                row_id = conn.execute(text("SELECT nextval('sql_query_log_id_seq')")).scalar_one()
                 conn.execute(
                     text(
                         """
-                        INSERT INTO sql_query_log (tool, question, sql_text, plan_cost, row_count,
-                                                   duration_ms, status, rejection_reason)
-                        VALUES (:tool, :question, :sql, :cost, :rows, :ms, :status, :reason)
+                        INSERT INTO sql_query_log (id, tool, question, sql_text, plan_cost,
+                                                   row_count, duration_ms, status,
+                                                   rejection_reason)
+                        VALUES (:id, :tool, :question, :sql, :cost, :rows, :ms, :status, :reason)
                         """
                     ),
                     {
+                        "id": row_id,
                         "tool": tool,
                         "question": question,
                         "sql": sql_text[:MAX_SQL_CHARS],
@@ -196,6 +203,7 @@ class QueryLog:
                 "the audit log write failed, so the result is withheld (fail closed): "
                 f"{type(e).__name__}"
             ) from e
+        return int(row_id)
 
 
 def create_sql_server(
@@ -393,7 +401,7 @@ def create_sql_server(
         truncated = len(fetched) > checked.limit  # an extra row existed beyond the limit
         rows = [[_jsonable(v) for v in row] for row in fetched[: checked.limit]]
         duration = elapsed_ms()
-        log.write(
+        query_id = log.write(
             "run_query",
             sql,
             "ok",
@@ -403,6 +411,7 @@ def create_sql_server(
             duration_ms=duration,
         )
         return QueryResponse(
+            query_id=query_id,
             columns=columns,
             rows=rows,
             row_count=len(rows),
