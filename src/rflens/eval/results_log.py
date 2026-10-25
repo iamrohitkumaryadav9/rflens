@@ -8,6 +8,9 @@ stale) and two tables, each with its rows appended automatically:
   data/eval/*.json), commit (HEAD when the run started, "+dirty" when the working tree had
   uncommitted changes), model and tier, golden set (questions run), execution accuracy (sql
   questions matched), refusal correctness (refuse questions matched), LLM calls, cost, note.
+- End-to-end runs (`make eval-e2e`): date, run_id, commit, model and tier, questions run of the
+  golden set, correct per type (doc: answer correct / evidence recall), correct per author
+  group, calls, cost, note.
 - Retrieval runs (`make eval-docs`): date, run_id, commit, the questions (author group and count),
   recall@5 for vector, keyword and hybrid search without / with the spec filter, note. Two rows
   per run (human and assistant doc questions). Free: no LLM is called.
@@ -23,6 +26,7 @@ RESULTS_PATH = REPO_ROOT / "eval" / "RESULTS.md"
 
 SQL_TITLE = "## SQL agent runs (make eval-sql)"
 DOCS_TITLE = "## Retrieval runs (make eval-docs)"
+E2E_TITLE = "## End-to-end runs (make eval-e2e)"
 COUNTS_START = "<!-- golden-counts:start (generated: make results-header) -->"
 COUNTS_END = "<!-- golden-counts:end -->"
 
@@ -46,6 +50,23 @@ DOCS_COLUMNS = [
     "vector (no filter / spec filter)",
     "keyword (no filter / spec filter)",
     "hybrid (no filter / spec filter)",
+    "note",
+]
+
+E2E_COLUMNS = [
+    "date (UTC)",
+    "run_id",
+    "commit",
+    "model / tier",
+    "questions run",
+    "sql",
+    "doc (answer / evidence recall)",
+    "mixed",
+    "refuse",
+    "human",
+    "assistant",
+    "calls",
+    "cost",
     "note",
 ]
 
@@ -96,7 +117,9 @@ def _counts_section(questions: list | None = None) -> str:
     return f"{COUNTS_START}\n{golden_counts_block(questions)}\n{COUNTS_END}\n"
 
 
-def _template(sql_rows: str = "", docs_rows: str = "", questions: list | None = None) -> str:
+def _template(
+    sql_rows: str = "", docs_rows: str = "", questions: list | None = None, e2e_rows: str = ""
+) -> str:
     return (
         INTRO
         + _counts_section(questions)
@@ -106,6 +129,9 @@ def _template(sql_rows: str = "", docs_rows: str = "", questions: list | None = 
         + f"\n{DOCS_TITLE}\n\n"
         + _table_header(DOCS_COLUMNS)
         + docs_rows
+        + f"\n{E2E_TITLE}\n\n"
+        + _table_header(E2E_COLUMNS)
+        + e2e_rows
     )
 
 
@@ -128,7 +154,11 @@ def _load(path: Path) -> str:
     if not path.exists() or not path.read_text(encoding="utf-8").strip():
         return _template()
     text = path.read_text(encoding="utf-8")
-    return text if DOCS_TITLE in text else _migrate_old_format(text)
+    if DOCS_TITLE not in text:
+        return _migrate_old_format(text)
+    if E2E_TITLE not in text:  # files written before the end-to-end table existed
+        text = text.rstrip("\n") + f"\n\n{E2E_TITLE}\n\n" + _table_header(E2E_COLUMNS)
+    return text
 
 
 def _insert_row(text: str, title: str, row: str) -> str:
@@ -250,6 +280,48 @@ def append_docs_rows(
         rows.append(row)
     _write(path, text)
     return rows
+
+
+def append_e2e_row(
+    *,
+    run_id: str,
+    commit: str,
+    model: str,
+    tier: str,
+    questions_run: int,
+    questions_total: int,
+    cells: dict[str, str],
+    calls: int,
+    cost_usd: float,
+    note: str = "",
+    when: datetime | None = None,
+    path: Path = RESULTS_PATH,
+    questions: list | None = None,
+) -> str:
+    """Append one end-to-end run. `cells` holds the result cells keyed sql, doc, mixed, refuse,
+    human, assistant (each already formatted, for example '12/19')."""
+    when = when or datetime.now(UTC)
+    row = _row(
+        [
+            when.strftime("%Y-%m-%d %H:%M"),
+            run_id,
+            commit,
+            f"{model} / {tier}",
+            f"{questions_run}/{questions_total}",
+            cells["sql"],
+            cells["doc"],
+            cells["mixed"],
+            cells["refuse"],
+            cells["human"],
+            cells["assistant"],
+            str(calls),
+            f"${cost_usd:.6f}",
+            note,
+        ]
+    )
+    text = _replace_counts(_load(path), questions)
+    _write(path, _insert_row(text, E2E_TITLE, row))
+    return row
 
 
 def parse_table(path: Path, title: str) -> list[list[str]]:

@@ -770,3 +770,39 @@ def test_run_summary_and_spend_report() -> None:
     assert report.count("fake/fake-1") == 3  # the last calls
     top = report.split("Top 5 purposes by cost:")[1]
     assert top.index("plan-sql") < top.index("summarise")  # ordered by cost
+
+
+# --- loop detectors are scoped to a question when the call names one ---------------------------
+
+
+def test_identical_prompts_of_different_questions_do_not_add_up() -> None:
+    fake = FakeProvider()
+    rig = Rig(fake)
+    with rig.run() as run:
+        for qid in ("q1", "q2", "q3", "q4"):  # the same text for four questions: no loop
+            run.generate(msg("same"), purpose="a", question_id=qid, max_output_tokens=5)
+        for _ in range(2):
+            run.generate(msg("again"), purpose="a", question_id="q1", max_output_tokens=5)
+        with pytest.raises(LoopDetected) as err:  # the third of one question is a loop
+            run.generate(msg("again"), purpose="a", question_id="q1", max_output_tokens=5)
+        assert err.value.kind == "repeat_prompt" and err.value.question_id == "q1"
+        assert "question 'q1'" in str(err.value) and run.run_id in str(err.value)
+        # another question is not affected, and the run goes on
+        run.generate(msg("again"), purpose="a", question_id="q2", max_output_tokens=5)
+
+
+def test_error_streaks_are_counted_per_question() -> None:
+    fake = FakeProvider(script=[ProviderError("bad", 400)] * 5)
+    rig = Rig(fake)
+    with rig.run() as run:
+        for qid in ("q1", "q2", "q1", "q2"):  # interleaved: two each, no streak of three
+            with pytest.raises(ProviderError):
+                run.generate(
+                    msg(qid + str(len(fake.calls))),
+                    purpose="a",
+                    question_id=qid,
+                    max_output_tokens=5,
+                )
+        with pytest.raises(LoopDetected) as err:  # q1's third in a row
+            run.generate(msg("q1 last"), purpose="a", question_id="q1", max_output_tokens=5)
+        assert err.value.kind == "repeat_error" and err.value.question_id == "q1"

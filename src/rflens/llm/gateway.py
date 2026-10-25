@@ -153,7 +153,7 @@ class LLMRun:
                 f"prompt is about {est_in} tokens; LLM_MAX_INPUT_TOKENS is {s.llm_max_input_tokens}"
             )
         digest = prompt_hash(messages, json_schema)
-        self.guard.note_prompt(digest)
+        self.guard.note_prompt(digest, question_id)
 
         retries_left = s.llm_max_retries
         attempt = 0
@@ -214,11 +214,11 @@ class LLMRun:
                         error=f"{type(e).__name__}: {e}",
                     )
                     raise
-                return self._succeed(prov, raw, row_id, started, json_schema)
+                return self._succeed(prov, raw, row_id, started, json_schema, question_id)
             if last_error is None or not last_error.retryable:
                 break  # a request that was refused would be refused again: no fallback
         assert last_error is not None
-        self.guard.note_failure(last_error.signature())
+        self.guard.note_failure(last_error.signature(), question_id)
         raise last_error
 
     # --- helpers ----------------------------------------------------------------------------------
@@ -229,7 +229,9 @@ class LLMRun:
             delay = max(delay, min(error.retry_after, MAX_BACKOFF_S))
         return delay + random.uniform(0, delay * 0.1)
 
-    def _succeed(self, prov: Provider, raw, row_id: int, started: float, json_schema) -> LLMResult:
+    def _succeed(
+        self, prov: Provider, raw, row_id: int, started: float, json_schema, question_id=None
+    ) -> LLMResult:
         gw = self.gateway
         latency_ms = int((time.perf_counter() - started) * 1000)
         usage: Usage = raw.usage
@@ -241,7 +243,7 @@ class LLMRun:
         gw.ledger.finish(  # before the result leaves: LedgerError withholds it
             row_id, status="ok", usage=usage, cost_usd=cost, latency_ms=latency_ms
         )
-        self.guard.note_success()
+        self.guard.note_success(question_id)
         self.input_tokens += usage.input_tokens
         self.output_tokens += usage.output_tokens
         self.thinking_tokens += usage.thinking_tokens

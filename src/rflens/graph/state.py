@@ -33,11 +33,14 @@ class GraphState(TypedDict, total=False):
     # evidence
     chunks: list[dict[str, Any]]  # [{ref, chunk_id, spec, version, clause, ..., text}]
     sql: dict[str, Any] | None
+    doc_hits: list[dict[str, Any]]  # every search result (or looked-up chunk): rank, id, clause
     band_lookup: dict[str, Any] | None  # {query_id, requested, found, missing} of the band lookup
     # writer / verifier
     draft: str
     sql_retries: int  # SQL-side verification failures answered by a second SQL attempt
     sql_feedback: list[dict[str, Any]]  # the failures the SQL agent is to fix (else empty)
+    writer_raw: str  # the writer's last raw output (cut to WRITER_RAW_CHARS)
+    writer_failure: str  # '' or the reason the last writer call gave no usable answer
     draft_history: list[dict[str, Any]]  # every writer draft with its verification failures
     writer_attempts: int
     verification: dict[str, Any]

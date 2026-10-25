@@ -224,7 +224,7 @@ class GraphSettings(BaseSettings):
     orch_max_state_rows: int = 50  # SQL rows kept in the checkpointed state
     orch_writer_rows: int = 25  # SQL rows shown to the writer
     orch_planner_max_tokens: int = 300
-    orch_writer_max_tokens: int = 700
+    orch_writer_max_tokens: int = 1500  # 700 cut a long band list off mid-JSON (e2e run 1)
     orch_max_writer_retries: int = 2
 
 

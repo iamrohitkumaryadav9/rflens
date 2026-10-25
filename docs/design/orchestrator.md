@@ -203,7 +203,7 @@ Built as `rflens.graph.cli` (`run`, `resume`, `status`; `make orchestrate`,
 - A hard kill must hit the interpreter that printed its pid. On Windows the `.venv` python is a
   launcher in front of the real interpreter; killing only the launcher is not a hard kill.
 
-## End-to-end scoring (not built)
+## End-to-end scoring (built in step 5)
 
 `make eval-e2e` runs all golden questions with approval auto, through the checkpointer.
 
@@ -214,8 +214,32 @@ Built as `rflens.graph.cli` (`run`, `resume`, `status`; `make orchestrate`,
 - **mixed:** doc hit and SQL match, plus `must_mention`.
 - **refuse:** status `refused` with a reason, and no SQL or doc search run.
 
-Results by author group are appended to `eval/RESULTS.md`. The first full run needs explicit
-approval and has a $0.40 stop.
+Results by author group are appended to `eval/RESULTS.md` (table "End-to-end runs"). The first full
+run needs explicit approval and has a $0.40 stop.
+
+Details of the build (`rflens.eval.eval_e2e`, scoring in `rflens.eval.e2e_score`):
+
+- One thread per question, id = run id + question id; approval automatic; per-question cap 10;
+  the run call cap is questions x 10 and fallback providers are off. Before any paid call it prints
+  the question count, the worst-case calls (questions x 10) and the worst-case cost (all 10 calls of
+  every question at the dearest kind of call), then proceeds. `--stop-usd` (default 0.40): once the
+  cost of the run has reached it, the question in progress is finished and the run stops with the
+  results so far. A run-level stop (budget, loop, unreachable server) also ends the run there.
+- **sql:** the answer cites [S1]; the SQL result matches the reference under the relaxed
+  `compare()`; the answer text contains every reference value (ranked: in reference order; a number
+  matches a number written at its own precision, thousands separators are read, zero also matches
+  the words zero / no / none, NULL needs no text, strings match case-insensitively); `must_mention`
+  words are in the answer text.
+- **doc:** a cited chunk hits the target (right spec; exact clause or listed table) and the status
+  is `answered` with verification passed. **Evidence recall** is separate: the target among the
+  search results (`doc_hits` in the state) and among the chunks the writer saw.
+- **mixed:** doc part and SQL part, plus `must_mention`. **refuse:** `refused` with a reason and no
+  SQL query (`query_id`) and no document search or band lookup in the state.
+- Per question it records the final status, whether verification passed, writer and SQL retries (from
+  `draft_history`), calls, cost and the failure types seen. A first guess at the cause of each miss
+  (retrieval miss, wrong SQL, writer/verifier redaction, wrong route, refusal error, scorer issue)
+  is made from the state; a human reads every miss.
+- Full per-question results go to `data/eval/eval_e2e_<run>.json` (gitignored).
 
 ## Band lookup (structural fix for mixed retrieval)
 
@@ -333,6 +357,20 @@ lists recent threads that can be reopened and resumed. **Why Streamlit:** it ins
 (with pyarrow) under this machine's Application Control policy (checked in a throwaway venv before
 it was added; streamlit 1.66.1, pyarrow 26.0.0), so no hand-written page was needed. It sends no
 usage statistics (`.streamlit/config.toml`).
+
+## Writer failures and loop scope (after the first end-to-end run)
+
+- **`writer_truncated`:** a writer call whose output is not a complete JSON answer (a MAX_TOKENS
+  finish, or unparseable output) is a verification failure of type `writer_truncated`, not an empty
+  answer. The writer's output allowance is `ORCH_WRITER_MAX_TOKENS` = 1500.
+- **Retry prompts never repeat:** every writer retry sends the previous output (or a placeholder
+  when there was none) and a feedback message that names the retry number and the failures; for
+  `writer_truncated` it says to shorten the answer (summarise long lists, keep the citations).
+- **Raw output:** `draft_history` entries carry `raw`, the writer's raw output cut to 2000 characters.
+- **Loop scope:** the repeated-prompt and repeated-error detectors count per question when the call
+  names one. A loop within one question fails that question (status `failed`, failure type
+  `loop_detected` in its `draft_history` / verification) and an end-to-end run continues with the
+  next question. The run call cap, the budget and the paid-call block still stop the whole run.
 
 ## Build differences (flagged)
 

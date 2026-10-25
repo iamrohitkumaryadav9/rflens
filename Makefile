@@ -1,4 +1,4 @@
-.PHONY: up down migrate test-db test lint run load-secom load-uls load-fcc-eas fetch-3gpp chunk-3gpp embed-3gpp eval-smoke docs-mcp sql-mcp llm-spend golden-refresh eval-sql eval-docs load-spec-bands orchestrate orchestrate-resume orchestrate-status api ui servers-up servers-status servers-down results-header ci-local
+.PHONY: up down migrate test-db test lint run load-secom load-uls load-fcc-eas fetch-3gpp chunk-3gpp embed-3gpp eval-smoke docs-mcp sql-mcp llm-spend golden-refresh eval-sql eval-docs eval-e2e load-spec-bands orchestrate orchestrate-resume orchestrate-status api ui servers-up servers-status servers-down results-header ci-local
 
 up:
 	docker compose up -d --wait
@@ -93,6 +93,12 @@ eval-sql:
 # FREE: no LLM call. Appends rows to eval/RESULTS.md; NOTE=... fills the note.
 eval-docs:
 	uv run python -m rflens.eval.eval_docs $(if $(NOTE),--note "$(NOTE)")
+
+# Every golden question through the whole graph (approval auto), scored on the final answer.
+# PAID: needs LLM_ALLOW_PAID=true and the servers (make servers-up). DRY=1 prints the plan only.
+# STOP_USD=0.40 stops the run (the current question is finished first); NOTE=... fills the note.
+eval-e2e:
+	uv run python -m rflens.eval.eval_e2e $(if $(DRY),--dry-run) $(if $(STOP_USD),--stop-usd $(STOP_USD)) $(if $(NOTE),--note "$(NOTE)")
 
 # Refresh the generated golden-set counts at the top of eval/RESULTS.md.
 results-header:

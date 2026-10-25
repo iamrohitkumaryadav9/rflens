@@ -29,9 +29,8 @@ class RunGuard:
         self.max_calls_per_question = max_calls_per_question
         self.attempts = 0
         self.per_question: Counter[str] = Counter()
-        self.prompt_counts: Counter[str] = Counter()
-        self._last_error: str | None = None
-        self._error_streak = 0
+        self.prompt_counts: Counter[tuple[str | None, str]] = Counter()
+        self._errors: dict[str | None, tuple[str | None, int]] = {}
 
     def count_attempt(self, question_id: str | None) -> None:
         """Count one attempt against both caps, or raise before it is made."""
@@ -57,34 +56,42 @@ class RunGuard:
         if question_id is not None:
             self.per_question[question_id] += 1
 
-    def note_prompt(self, prompt_hash: str) -> None:
-        """Stop the run when the same prompt is sent for the third time."""
-        self.prompt_counts[prompt_hash] += 1
-        if self.prompt_counts[prompt_hash] >= REPEAT_LIMIT:
+    def note_prompt(self, prompt_hash: str, question_id: str | None = None) -> None:
+        """Stop on the third identical prompt: of one question when `question_id` is given,
+        otherwise of the run."""
+        self.prompt_counts[(question_id, prompt_hash)] += 1
+        if self.prompt_counts[(question_id, prompt_hash)] >= REPEAT_LIMIT:
             raise LoopDetected(
                 "repeat_prompt",
                 self.run_id,
-                f"run {self.run_id} stopped: the same prompt (hash {prompt_hash[:12]}) was sent "
-                f"{REPEAT_LIMIT} times",
+                f"{_scope(self.run_id, question_id)} stopped: the same prompt "
+                f"(hash {prompt_hash[:12]}) was sent {REPEAT_LIMIT} times",
+                question_id,
             )
 
-    def note_success(self) -> None:
-        self._last_error = None
-        self._error_streak = 0
+    def note_success(self, question_id: str | None = None) -> None:
+        self._errors[question_id] = (None, 0)
 
-    def note_failure(self, signature: str) -> None:
-        """Stop the run when a call fails with the same error three calls in a row."""
-        if signature == self._last_error:
-            self._error_streak += 1
-        else:
-            self._last_error, self._error_streak = signature, 1
-        if self._error_streak >= REPEAT_LIMIT:
+    def note_failure(self, signature: str, question_id: str | None = None) -> None:
+        """Stop when a call fails with the same error three calls in a row (per question when
+        `question_id` is given)."""
+        last, streak = self._errors.get(question_id, (None, 0))
+        streak = streak + 1 if signature == last else 1
+        self._errors[question_id] = (signature, streak)
+        if streak >= REPEAT_LIMIT:
             raise LoopDetected(
                 "repeat_error",
                 self.run_id,
-                f"run {self.run_id} stopped: the same error occurred {REPEAT_LIMIT} calls in a "
-                f"row ({signature})",
+                f"{_scope(self.run_id, question_id)} stopped: the same error occurred "
+                f"{REPEAT_LIMIT} calls in a row ({signature})",
+                question_id,
             )
+
+
+def _scope(run_id: str, question_id: str | None) -> str:
+    if question_id is None:
+        return f"run {run_id}"
+    return f"question {question_id!r} of run {run_id}"
 
 
 class RateLimiter:

@@ -38,6 +38,7 @@ from rflens.graph.verifier import CITE_RE, split_sentences, units_in, verify
 from rflens.llm.base import (
     BadStructuredOutput,
     CallCapExceeded,
+    LoopDetected,
     Message,
     ProviderError,
     estimate_tokens,
@@ -112,6 +113,31 @@ def planned_worst_case_usd(deps: GraphDeps, route: str, question: str) -> float:
     return total
 
 
+def _loop_halt(state: GraphState, e: LoopDetected, node: str) -> dict:
+    """A repeated prompt or error within one question fails that question (failure type
+    loop_detected) and nothing else: the run goes on with the next question."""
+    failure = {"type": "loop_detected", "sentence": None, "detail": f"{node}: {e}"}
+    history = state.get("draft_history") or []
+    entry = {
+        "attempt": len(history) + 1,
+        "draft": "",
+        "raw": "",
+        "ok": False,
+        "failures": [failure],
+    }
+    return {
+        "halt": f"loop_detected in {node}: {e}",
+        "verification": {
+            "ok": False,
+            "failures": [failure],
+            "evidence_map": [],
+            "band_edges": [],
+            "band_joins": [],
+        },
+        "draft_history": [*history, entry],
+    }
+
+
 def make_planner(deps: GraphDeps):
     def planner(state: GraphState) -> dict:
         qid, question = state["question_id"], state["question"]
@@ -127,6 +153,8 @@ def make_planner(deps: GraphDeps):
                 )
             except CallCapExceeded as e:
                 return {"halt": _halt_cap(e)["halt"], "node_stats": {"planner": stat}}
+            except LoopDetected as e:
+                return {**_loop_halt(state, e, "planner"), "node_stats": {"planner": stat}}
             except (ProviderError, BadStructuredOutput) as e:
                 return {"halt": f"the planner call failed: {e}", "node_stats": {"planner": stat}}
         plan = generated.parsed if isinstance(generated.parsed, dict) else {}
@@ -255,12 +283,24 @@ def _chunk_entry(full: dict, ref: str, room: int, band_lines: list[str] | None =
     return entry
 
 
+def _hit_summary(hit: dict, rank: int) -> dict:
+    """A search result (or fetched chunk) reduced to what an eval needs to judge retrieval."""
+    return {
+        "rank": rank,
+        "chunk_id": hit["chunk_id"],
+        "spec": hit["spec"],
+        "clause": hit["clause"],
+        "table_number": hit.get("table_number"),
+    }
+
+
 def make_doc_agent(deps: GraphDeps):
     def doc_agent(state: GraphState) -> dict:
         s = deps.settings
         started = time.perf_counter()
         plan = state.get("plan") or {}
         extra: dict = {}
+        doc_hits: list[dict] = []  # what the search (or band lookup) returned, for evals
         try:
             chunks: list[dict] = []
             if plan.get("bands"):
@@ -275,6 +315,7 @@ def make_doc_agent(deps: GraphDeps):
                     chunks.append(
                         _chunk_entry(full, f"D{len(chunks) + 1}", s.orch_chunk_chars, lines)
                     )
+                doc_hits = [_hit_summary(c, i) for i, c in enumerate(chunks, start=1)]
                 if not chunks:
                     stat = {"calls": 0, "cost_usd": 0.0}
                     return {
@@ -291,6 +332,7 @@ def make_doc_agent(deps: GraphDeps):
                     s.orch_retrieval_mode,
                     s.orch_doc_k,
                 )
+                doc_hits = [_hit_summary(h, i) for i, h in enumerate(hits, start=1)]
                 used = 0
                 for hit in hits[: s.orch_doc_full_chunks]:
                     full = deps.docs_tools.get_chunk(hit["chunk_id"])
@@ -308,7 +350,7 @@ def make_doc_agent(deps: GraphDeps):
                 "halt": "no specification passages were found for this question",
                 "node_stats": {"doc_agent": stat},
             }
-        return {"chunks": chunks, "node_stats": {"doc_agent": stat}, **extra}
+        return {"chunks": chunks, "doc_hits": doc_hits, "node_stats": {"doc_agent": stat}, **extra}
 
     return doc_agent
 
@@ -369,6 +411,8 @@ def make_sql_agent(deps: GraphDeps):
                 question_id=qid,
                 context=context,
             )
+        except LoopDetected as e:
+            return {**_loop_halt(state, e, "sql_agent"), "node_stats": {"sql_agent": {"calls": 0}}}
         except SqlMcpUnavailable as e:
             return {"halt": str(e), "node_stats": {"sql_agent": {"calls": 0}}}
         stat = {"calls": result.calls, "cost_usd": result.cost_usd}
@@ -411,14 +455,38 @@ def make_sql_agent(deps: GraphDeps):
 # --- writer -------------------------------------------------------------------------------------
 
 
-def _correction(failures: list[dict]) -> str:
-    lines = "\n".join(f"- {f['type']}: {f['detail']}" for f in failures)
+WRITER_RAW_CHARS = 2000  # how much of a raw writer output draft_history keeps
+SHORTEN = (
+    "Shorten the answer: summarise long lists (name the first few items and give the count), "
+    "leave out detail the question did not ask for, and keep the citations."
+)
+
+
+def _correction(failures: list[dict], retry: int = 1) -> str:
+    """The feedback for a writer retry. It names the retry number and the failures, so no retry
+    prompt can repeat an earlier one, even when the previous draft was empty."""
+    lines = "\n".join(f"- {f['type']}: {f['detail']}" for f in failures) or "- no usable answer"
+    shorten = f"\n{SHORTEN}" if any(f["type"] == "writer_truncated" for f in failures) else ""
     return (
-        "Your answer failed verification against the evidence:\n"
-        f"{lines}\n"
+        f"Retry {retry}. Your previous answer failed verification against the evidence:\n"
+        f"{lines}{shorten}\n"
         "Rewrite it so that every claim is supported and cited. Remove any claim you cannot "
         'support. Answer with the JSON object {"answer": "..."} only.'
     )
+
+
+def _truncation_failure(e: BadStructuredOutput) -> tuple[str, str]:
+    """(raw output, failure detail) for a writer call whose output was not a complete JSON
+    answer: cut off at the output limit, or not valid JSON at all."""
+    result = e.result
+    if result.truncated:
+        why = (
+            f"the answer was cut off at the output limit ({result.finish_reason}) before the "
+            "JSON was complete"
+        )
+    else:
+        why = "the output was not a valid JSON answer"
+    return result.text or "", why
 
 
 def make_writer(deps: GraphDeps):
@@ -438,11 +506,12 @@ def make_writer(deps: GraphDeps):
                 )
             ),
         ]
-        if attempts and state.get("draft"):
+        if attempts:  # always say what went wrong, even if the previous draft was empty
             failures = (state.get("verification") or {}).get("failures") or []
+            previous = state.get("draft") or (state.get("writer_raw") or "")[:800]
             messages += [
-                Message.assistant(state.get("draft") or ""),
-                Message.user(_correction(failures)),
+                Message.assistant(previous or "(no usable answer)"),
+                Message.user(_correction(failures, attempts)),
             ]
         with _measured(deps, qid) as stat:
             try:
@@ -454,13 +523,27 @@ def make_writer(deps: GraphDeps):
                     max_output_tokens=deps.settings.orch_writer_max_tokens,
                 )
                 draft = str((generated.parsed or {}).get("answer") or "").strip()
+                raw, failure = generated.text or "", ""
+                if generated.truncated:  # valid JSON, but the model hit the output limit
+                    failure = (
+                        f"the answer was cut off at the output limit ({generated.finish_reason})"
+                    )
             except CallCapExceeded as e:
                 return {"halt": _halt_cap(e)["halt"], "node_stats": {"writer": stat}}
+            except LoopDetected as e:
+                return {**_loop_halt(state, e, "writer"), "node_stats": {"writer": stat}}
             except ProviderError as e:
                 return {"halt": f"the writer call failed: {e}", "node_stats": {"writer": stat}}
-            except BadStructuredOutput:
-                draft = ""  # the verifier reports an empty draft and the retry rule applies
-        return {"draft": draft, "writer_attempts": attempts + 1, "node_stats": {"writer": stat}}
+            except BadStructuredOutput as e:
+                draft = ""  # the verifier reports writer_truncated and the retry rule applies
+                raw, failure = _truncation_failure(e)
+        return {
+            "draft": draft,
+            "writer_raw": raw[:WRITER_RAW_CHARS],
+            "writer_failure": failure,
+            "writer_attempts": attempts + 1,
+            "node_stats": {"writer": stat},
+        }
 
     return writer
 
@@ -477,11 +560,17 @@ def verifier(state: GraphState) -> dict:
         chunks=state.get("chunks") or [],
         sql_question=(state.get("plan") or {}).get("sql_question") or "",
     )
+    if state.get("writer_failure"):  # the model gave no complete answer: not an "empty draft"
+        failure = {"type": "writer_truncated", "sentence": None, "detail": state["writer_failure"]}
+        result = {**result, "ok": False, "failures": [failure, *result["failures"]]}
+        if not state.get("draft"):
+            result["failures"] = [failure]
     # every draft and its failures stay in the checkpoint, so a redacted answer can be explained
     history = state.get("draft_history") or []
     entry = {
         "attempt": len(history) + 1,
         "draft": state.get("draft") or "",
+        "raw": state.get("writer_raw") or "",
         "ok": result["ok"],
         "failures": result["failures"],
     }

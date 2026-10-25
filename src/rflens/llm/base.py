@@ -123,10 +123,14 @@ class CallCapExceeded(LLMError):
 
 
 class LoopDetected(LLMError):
-    def __init__(self, kind: str, run_id: str, message: str):
+    """A repeated prompt or a repeated error. With a question id it is that question's loop (the
+    caller fails the question and goes on); without one it belongs to the whole run."""
+
+    def __init__(self, kind: str, run_id: str, message: str, question_id: str | None = None):
         super().__init__(message)
         self.kind = kind
         self.run_id = run_id
+        self.question_id = question_id
 
 
 class PaidCallBlocked(LLMError):

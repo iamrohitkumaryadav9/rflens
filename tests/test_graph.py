@@ -29,7 +29,7 @@ from rflens.graph.app import (
 from rflens.graph.docs_tools import DocsMcpTools
 from rflens.graph.nodes import GraphDeps
 from rflens.ingest.spec_fetch import SpecSource
-from rflens.llm.base import Pricing, Rate
+from rflens.llm.base import Pricing, Rate, RawResponse, Usage
 from rflens.llm.fake import FakeProvider
 from rflens.llm.gateway import Gateway
 from rflens.llm.guards import RateLimiter
@@ -1040,3 +1040,105 @@ def test_a_grouping_that_the_retry_does_not_fix_is_withheld(make_env, tag) -> No
     assert out.status == "partial"
     assert out.state["verification"]["redacted"] == ["frn_name_grouping"]
     assert out.state["sql"] is None and out.stats["writer"]["calls"] == 2
+
+
+# --- writer truncation, retry prompts, raw output, loop scope ----------------------------------
+
+CUT = RawResponse(
+    text='{"answer": "Band 1 uplink is 1920 MHz to 1980 MHz [D1], band 2 uplink is 18',
+    usage=Usage(10, 700, 0),
+    model="fake-1",
+    finish_reason="MAX_TOKENS",
+)
+NOT_JSON = RawResponse(
+    text="I am sorry, I cannot do that.",
+    usage=Usage(10, 8, 0),
+    model="fake-1",
+    finish_reason="STOP",
+)
+
+
+def test_a_writer_cut_off_at_the_output_limit_is_writer_truncated_and_told_to_shorten(
+    make_env, tag
+) -> None:
+    env = make_env([plan("sql"), GOOD_SQL, CUT, write("The answer is 42 [S1].")])
+    out = env.ask(f"What is forty one plus one? {tag}")
+    assert out.status == "answered" and out.state["writer_attempts"] == 2
+    first = out.state["draft_history"][0]
+    assert first["draft"] == "" and not first["ok"]
+    assert [f["type"] for f in first["failures"]] == ["writer_truncated"]
+    assert "cut off at the output limit (MAX_TOKENS)" in first["failures"][0]["detail"]
+    retry = env.provider.calls[3][0]  # the writer's second call
+    assert [m.role for m in retry] == ["system", "user", "assistant", "user"]
+    assert "writer_truncated" in retry[3].content and "Shorten the answer" in retry[3].content
+    assert "summarise long lists" in retry[3].content and "keep the citations" in retry[3].content
+
+
+def test_unparseable_writer_output_is_also_writer_truncated(make_env, tag) -> None:
+    env = make_env([plan("sql"), GOOD_SQL, NOT_JSON, write("The answer is 42 [S1].")])
+    out = env.ask(f"What is forty one plus one? {tag}")
+    failure = out.state["draft_history"][0]["failures"][0]
+    assert failure["type"] == "writer_truncated" and "not a valid JSON answer" in failure["detail"]
+    assert out.status == "answered"
+
+
+def test_no_writer_retry_prompt_repeats_an_earlier_one_even_after_empty_drafts(
+    make_env, tag
+) -> None:
+    env = make_env([plan("sql"), GOOD_SQL, CUT, CUT, CUT])
+    out = env.ask(f"What is forty one plus one? {tag}")
+    writer_prompts = [[m.content for m in call[0]] for call in env.provider.calls[2:]]
+    assert len(writer_prompts) == 3 and len({tuple(p) for p in writer_prompts}) == 3
+    assert "Retry 1." in writer_prompts[1][-1] and "Retry 2." in writer_prompts[2][-1]
+    assert all("writer_truncated" in p[-1] for p in writer_prompts[1:])
+    # three cut-off drafts end in a redacted (partial) answer, not in a loop stop
+    assert out.status == "partial" and out.state.get("halt") is None
+    assert [h["attempt"] for h in out.state["draft_history"]] == [1, 2, 3]
+
+
+def test_every_writer_call_leaves_its_raw_output_in_the_draft_history(make_env, tag) -> None:
+    long = RawResponse(
+        text='{"answer": "' + "x" * 5000,
+        usage=Usage(10, 700, 0),
+        model="fake-1",
+        finish_reason="MAX_TOKENS",
+    )
+    env = make_env([plan("sql"), GOOD_SQL, long, write("The answer is 42 [S1].")])
+    out = env.ask(f"What is forty one plus one? {tag}")
+    first, second = out.state["draft_history"]
+    assert first["raw"].startswith('{"answer": "xxx') and len(first["raw"]) == 2000  # cut to 2000
+    assert second["raw"] == write("The answer is 42 [S1].") and second["ok"]
+
+
+def test_the_writer_gets_1500_output_tokens_by_default(make_env, tag) -> None:
+    from rflens.config import GraphSettings
+
+    assert GraphSettings(_env_file=None).orch_writer_max_tokens == 1500
+    env = make_env([plan("sql"), GOOD_SQL, write("The answer is 42 [S1].")])
+    env.ask(f"What is forty one plus one? {tag}")
+    assert env.provider.calls[2][2] == 1500  # the max_output_tokens of the writer call
+
+
+@pytest.mark.parametrize("purpose", ["planner", "sql-agent", "writer"])
+def test_a_loop_within_one_question_fails_that_question_with_loop_detected(
+    make_env, tag, purpose
+) -> None:
+    from rflens.llm.base import LoopDetected
+
+    env = make_env([plan("sql"), GOOD_SQL, write("The answer is 42 [S1].")])
+    real = env.run.generate
+
+    def generate(messages, **kw):
+        if kw.get("purpose") == purpose:
+            raise LoopDetected(
+                "repeat_prompt", env.run.run_id, "same prompt 3 times", kw["question_id"]
+            )
+        return real(messages, **kw)
+
+    env.run.generate = generate
+    out = env.ask(f"What is forty one plus one? {tag}")
+    assert out.status == "failed" and "loop_detected" in out.state["halt"]
+    assert purpose.replace("-", "_") in out.state["halt"]
+    (entry,) = out.state["draft_history"]
+    assert [f["type"] for f in entry["failures"]] == ["loop_detected"]
+    assert out.state["verification"]["failures"][0]["type"] == "loop_detected"

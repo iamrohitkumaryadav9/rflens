@@ -363,6 +363,17 @@ data/                     # gitignored; raw downloads (data/raw/secom, data/raw/
     machine's Application Control policy. Details: docs/design/orchestrator.md. The verifier also
     has `frn_name_grouping` (grouping companies by name, alone or together with the FRN, is a SQL-side
     failure: one SQL retry, then redact).
+  - **End-to-end eval:** `make eval-e2e` (PAID; needs `LLM_ALLOW_PAID=true`, `make servers-up` and
+    Ollama; `DRY=1` prints the plan and worst case) runs all golden questions through the graph
+    (approval auto, one thread each) and scores the final answers (docs/design/orchestrator.md);
+    `STOP_USD` (0.40) stops the run after the question in progress. A row goes to the "End-to-end
+    runs" table of eval/RESULTS.md. The full-run results and misses are diagnosed, not tuned.
+  - **Writer failures and loop scope:** a writer output that is cut off (MAX_TOKENS) or not valid
+    JSON is the failure `writer_truncated` (`ORCH_WRITER_MAX_TOKENS` 1500); writer retries always
+    carry feedback and a retry number, so they never repeat a prompt; `draft_history` keeps each
+    writer call's raw output. Loop detectors count per question when the call names one: a loop
+    fails that question (`loop_detected`), the run goes on; run caps and the budget still stop it.
+    End-to-end scorer v2 checks the order of rows only (tied rows are a group); see eval/RESULTS.md.
   - Live smoke (`scripts/graph_smoke.py`, approval auto): sql-01 and doc-02 answered and verified.
     After the fixes mixed-01 (top 5 licensees, band 5 uplink) and mixed-02 (116,525) were
     `answered`, verified and equal to the golden reference under the relaxed compare, each SQL
