@@ -513,7 +513,21 @@ def test_paid_block_reason_covers_ci_pytest_and_the_opt_in() -> None:
     assert paid_block_reason(True, env={"CI": "false"}, modules={}) is None
 
 
-def test_the_real_gemini_provider_cannot_send_a_request_under_pytest() -> None:
+@pytest.mark.parametrize(
+    ("ci", "reason"),
+    [
+        (None, "pytest"),  # a developer machine: CI unset, so the pytest rule is what blocks
+        ("true", "CI"),  # GitHub Actions always sets CI=true, and the CI rule is checked first
+    ],
+)
+def test_the_real_gemini_provider_cannot_send_a_request_under_pytest_or_in_ci(
+    monkeypatch: pytest.MonkeyPatch, ci: str | None, reason: str
+) -> None:
+    # The block must hold in both environments; which rule reports it depends on CI, so pin it.
+    if ci is None:
+        monkeypatch.delenv("CI", raising=False)
+    else:
+        monkeypatch.setenv("CI", ci)
     sent: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -523,9 +537,9 @@ def test_the_real_gemini_provider_cannot_send_a_request_under_pytest() -> None:
     s = settings(gemini_api_key="k", llm_allow_paid=True)  # even explicitly allowed
     provider = GeminiProvider(s)  # a real provider: no transport override
     provider._client = httpx.Client(transport=httpx.MockTransport(handler))  # would record a leak
-    with pytest.raises(PaidCallBlocked, match="pytest"):
+    with pytest.raises(PaidCallBlocked, match=reason):
         provider.generate(msg(0), None, 10)
-    assert sent == []
+    assert sent == []  # nothing left the process in either environment
 
 
 def test_the_gateway_blocks_a_real_gemini_provider_before_any_ledger_row() -> None:
