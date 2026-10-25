@@ -347,6 +347,9 @@ data/                     # gitignored; raw downloads (data/raw/secom, data/raw/
     process continues the thread), `make orchestrate-status THREAD=<id>` (latest checkpoint, next
     node, run ids and calls per node from `llm_calls`); `rflens.graph.cli`. A hard kill must hit
     the pid the program prints (on Windows the venv launcher is a separate process).
+    `make servers-up|servers-status|servers-down` start and stop the dev servers (sql-mcp, docs-mcp,
+    api, ui) by the PID recorded in the gitignored `run/<name>.pid`, never by port; a taken port
+    is reported, not freed (`PORT="api=8010"` picks another).
     `scripts/demo_kill_resume.py` scripts the whole demo; offline it runs with
     `LLM_PROVIDER=fake RFLENS_FAKE_SCRIPT=<json>` (tests/test_orchestrate_cli.py).
   - **CLI / API / UI (step 4).** `rflens ask "<question>" [--thread ID] [--ask] [--show-drafts]
@@ -447,4 +450,5 @@ Details are for the `cell` service, snapshot complete/l_cell.zip dated 2026-10-1
 - If a requirement is ambiguous, pick the simplest reading, state it in one line, and continue.
 - Never invent dataset schemas, URLs or file formats. If you need to know one, inspect the real file or ask me.
 - Pin dependency versions. Keep secrets only in .env.
+- Never stop, kill or restart a process you did not start in this session. Track the PIDs of processes you start and stop only those PIDs. Never stop processes by port, name or command-line pattern. If a port you need is taken, report it and choose another port.
 - End every task with a summary: what changed, check results, open issues.

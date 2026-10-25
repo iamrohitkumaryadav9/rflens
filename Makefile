@@ -1,4 +1,4 @@
-.PHONY: up down migrate test-db test lint run load-secom load-uls load-fcc-eas fetch-3gpp chunk-3gpp embed-3gpp eval-smoke docs-mcp sql-mcp llm-spend golden-refresh eval-sql eval-docs load-spec-bands orchestrate orchestrate-resume orchestrate-status api ui results-header ci-local
+.PHONY: up down migrate test-db test lint run load-secom load-uls load-fcc-eas fetch-3gpp chunk-3gpp embed-3gpp eval-smoke docs-mcp sql-mcp llm-spend golden-refresh eval-sql eval-docs load-spec-bands orchestrate orchestrate-resume orchestrate-status api ui servers-up servers-status servers-down results-header ci-local
 
 up:
 	docker compose up -d --wait
@@ -97,6 +97,17 @@ eval-docs:
 # Refresh the generated golden-set counts at the top of eval/RESULTS.md.
 results-header:
 	uv run python -m rflens.eval.results_log
+
+# Dev servers started and stopped by recorded PID (run/<name>.pid), never by port or name.
+# SERVERS="sql-mcp docs-mcp api ui" picks some; PORT="api=8010" starts one on another port.
+servers-up:
+	uv run python -m rflens.devservers up $(SERVERS) $(foreach p,$(PORT),--port $(p))
+
+servers-status:
+	uv run python -m rflens.devservers status $(SERVERS)
+
+servers-down:
+	uv run python -m rflens.devservers down $(SERVERS)
 
 # The CI job in Docker: fresh Postgres, clean copy of the working tree (no .env, no data/), the
 # workflow's env plus CI=true, no Ollama or MCP servers. Run it before pushing test or CI changes.
