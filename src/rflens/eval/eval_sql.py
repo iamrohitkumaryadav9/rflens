@@ -21,6 +21,7 @@ from rflens.agents.sql_prompt import build_system_prompt
 from rflens.agents.sql_tools import SqlMcpTools, SqlMcpUnavailable
 from rflens.config import LlmSettings, get_agent_settings, get_llm_settings
 from rflens.eval.golden import GoldenQuestion, load_golden, problems
+from rflens.eval.results_log import RESULTS_PATH, append_row, git_commit
 from rflens.eval.scorer import ResultSet, compare
 from rflens.llm.base import LLMError, Message, Pricing, estimate_tokens
 from rflens.llm.gateway import _repo_path, build_gateway
@@ -143,6 +144,7 @@ HEADER = (
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the SQL agent on the golden set")
     parser.add_argument("--dry-run", action="store_true", help="print the plan, make no LLM call")
+    parser.add_argument("--note", default="", help="one line for the last column of RESULTS.md")
     args = parser.parse_args(argv)
 
     settings = get_llm_settings()
@@ -194,6 +196,7 @@ def main(argv: list[str] | None = None) -> int:
 
     results: list[tuple[GoldenQuestion, AgentResult, bool, str]] = []
     stopped: str | None = None
+    commit = git_commit()  # HEAD as the run starts
     print("\n" + HEADER)
     with gateway.run("eval-sql") as run:
         for q in questions:
@@ -233,6 +236,24 @@ def main(argv: list[str] | None = None) -> int:
         f"cost ${cost:.6f} (INR {pricing.to_inr(cost):.4f}), total spent ${total:.6f}, "
         f"remaining ${max(settings.llm_budget_usd - total, 0):.6f}"
     )
+    by_kind = {kind: [x for x in results if x[0].type == kind] for kind in ("sql", "refuse")}
+    note = " ".join(
+        part for part in (args.note, f"STOPPED EARLY at {stopped}" if stopped else "") if part
+    )
+    append_row(
+        run_id=run.run_id,
+        commit=commit,
+        model=settings.llm_model,
+        tier=settings.llm_service_tier,
+        sql_matched=sum(x[2] for x in by_kind["sql"]),
+        sql_total=len(by_kind["sql"]),
+        refuse_matched=sum(x[2] for x in by_kind["refuse"]),
+        refuse_total=len(by_kind["refuse"]),
+        calls=calls,
+        cost_usd=cost,
+        note=note,
+    )
+    print(f"row appended to {RESULTS_PATH}")
     return 1 if stopped else 0
 
 

@@ -13,7 +13,7 @@ questions:
     rows:
     - - 104
     row_count: 1
-    checked_on: '2026-10-24'
+    checked_on: '2026-10-25'
     via: sql-mcp
 - id: sql-02
   type: sql
@@ -30,7 +30,7 @@ questions:
     rows:
     - - 51
     row_count: 1
-    checked_on: '2026-10-24'
+    checked_on: '2026-10-25'
     via: sql-mcp
 - id: sql-03
   type: sql
@@ -67,7 +67,7 @@ questions:
     - - 493
       - 1341
     row_count: 8
-    checked_on: '2026-10-24'
+    checked_on: '2026-10-25'
     via: sql-mcp
 - id: sql-04
   type: sql
@@ -89,7 +89,7 @@ questions:
     - - fail
       - 8.515123076923071
     row_count: 2
-    checked_on: '2026-10-24'
+    checked_on: '2026-10-25'
     via: sql-mcp
 - id: sql-05
   type: sql
@@ -103,7 +103,7 @@ questions:
     rows:
     - - 1732
     row_count: 1
-    checked_on: '2026-10-24'
+    checked_on: '2026-10-25'
     via: sql-mcp
 - id: sql-06
   type: sql
@@ -130,7 +130,7 @@ questions:
     - - 0014980726
       - 283
     row_count: 3
-    checked_on: '2026-10-24'
+    checked_on: '2026-10-25'
     via: sql-mcp
 - id: sql-07
   type: sql
@@ -154,7 +154,7 @@ questions:
       - UNION TELEPHONE COMPANY
       - 1564
     row_count: 1
-    checked_on: '2026-10-24'
+    checked_on: '2026-10-25'
     via: sql-mcp
 - id: sql-08
   type: sql
@@ -168,7 +168,7 @@ questions:
     rows:
     - - 1953
     row_count: 1
-    checked_on: '2026-10-24'
+    checked_on: '2026-10-25'
     via: sql-mcp
 - id: sql-09
   type: sql
@@ -184,7 +184,7 @@ questions:
     rows:
     - - 1054.9
     row_count: 1
-    checked_on: '2026-10-24'
+    checked_on: '2026-10-25'
     via: sql-mcp
 - id: sql-10
   type: sql
@@ -204,7 +204,7 @@ questions:
     - - 2
       - 26
     row_count: 1
-    checked_on: '2026-10-24'
+    checked_on: '2026-10-25'
     via: sql-mcp
 - id: sql-11
   type: sql
@@ -235,7 +235,7 @@ questions:
     - - Hong Kong
       - 2397
     row_count: 5
-    checked_on: '2026-10-24'
+    checked_on: '2026-10-25'
     via: sql-mcp
 - id: sql-12
   type: sql
@@ -253,7 +253,7 @@ questions:
     - - 1093
       - 71
     row_count: 1
-    checked_on: '2026-10-24'
+    checked_on: '2026-10-25'
     via: sql-mcp
 - id: sql-13
   type: sql
@@ -295,7 +295,7 @@ questions:
     - - Argentina
       - 21
     row_count: 10
-    checked_on: '2026-10-24'
+    checked_on: '2026-10-25'
     via: sql-mcp
 - id: sql-14
   type: sql
@@ -314,7 +314,7 @@ questions:
     - - '2026-10-18'
       - US Government Work (https://www.usa.gov/government-works)
     row_count: 1
-    checked_on: '2026-10-24'
+    checked_on: '2026-10-25'
     via: sql-mcp
 - id: sql-15
   type: sql
@@ -337,7 +337,47 @@ questions:
     - - AST & Science, LLC
       - 1439
     row_count: 1
-    checked_on: '2026-10-24'
+    checked_on: '2026-10-25'
+    via: sql-mcp
+- id: sql-16
+  type: sql
+  status: reviewed
+  question: How many distinct companies, by FCC Registration Number, hold active cellular licences, excluding spectrum leases?
+  reference_sql: |-
+    SELECT count(DISTINCT licensee_frn) AS companies
+    FROM v_uls_licences
+    WHERE license_status = 'A' AND NOT is_lease
+  notes: 'Interpretation (held-out question for the FRN comment fix, migration 0011): a company is a distinct licensee_frn of the ''L'' entity (meaning unconfirmed, open question b; open question k); active = license_status ''A'' (assumed); spectrum leases excluded with NOT is_lease (open question j). Licences without an FRN would not be counted, but no active licence lacks one. Counting by licensee_name instead gives 166 (name spellings split companies).'
+  reference_result:
+    columns:
+    - companies
+    rows:
+    - - 154
+    row_count: 1
+    checked_on: '2026-10-25'
+    via: sql-mcp
+- id: sql-17
+  type: sql
+  status: reviewed
+  ordered: true
+  question: Which licensee, by FCC Registration Number, has the most expired cellular licences, excluding spectrum leases, and how many?
+  reference_sql: |-
+    SELECT licensee_frn, count(*) AS expired_licences
+    FROM v_uls_licences
+    WHERE license_status = 'E' AND NOT is_lease AND licensee_frn IS NOT NULL
+    GROUP BY licensee_frn
+    ORDER BY expired_licences DESC, licensee_frn
+    LIMIT 1
+  notes: 'Interpretation (held-out question for the FRN comment fix, migration 0011): expired = license_status ''E'' (meaning unconfirmed, open question b; with expired_date < today the winner would be New Cingular, 28, instead); spectrum leases excluded (open question j); licensees are identified by licensee_frn, so licences with no FRN are excluded: 41 expired licences have none (one operator under 29 name spellings) and would otherwise be the largest group. The result is the FRN and the count. Rank 1 has 11, rank 2 has 5.'
+  reference_result:
+    columns:
+    - licensee_frn
+    - expired_licences
+    rows:
+    - - 0002210086
+      - 11
+    row_count: 1
+    checked_on: '2026-10-25'
     via: sql-mcp
 - id: refuse-01
   type: refuse

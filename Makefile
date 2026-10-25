@@ -62,6 +62,7 @@ golden-refresh:
 	uv run python -m rflens.eval.golden
 
 # SQL agent on the golden sql + refuse questions. PAID: needs LLM_ALLOW_PAID=true and a running
-# sql-mcp. DRY=1 prints the plan and the worst-case cost and makes no LLM call.
+# sql-mcp. DRY=1 prints the plan and the worst-case cost and makes no LLM call. Every real run
+# appends a row to eval/RESULTS.md; NOTE=... fills its last column.
 eval-sql:
-	uv run python -m rflens.eval.eval_sql $(if $(DRY),--dry-run)
+	uv run python -m rflens.eval.eval_sql $(if $(DRY),--dry-run) $(if $(NOTE),--note "$(NOTE)")

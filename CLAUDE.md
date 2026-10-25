@@ -203,7 +203,7 @@ data/                     # gitignored; raw downloads (data/raw/secom, data/raw/
   return the entity and its measure and break ties by key ascending; never guess units, report
   ASSUMED/UNKNOWN ones in notes; refuse data changes, personal contact data and out-of-scope
   questions. Six worked examples, none from the golden set (a test enforces it).
-- **Golden set** `eval/golden.yaml` (all question types; ids `sql-01..15`, `refuse-01..03`, all
+- **Golden set** `eval/golden.yaml` (all question types; ids `sql-01..17`, `refuse-01..03`; sql-16 and sql-17 are held-out checks of the FRN guidance, all
   `reviewed` by the project owner on 2026-10-24). sql questions carry `reference_sql` and a stored
   `reference_result` produced through sql-mcp (`make golden-refresh`, needs `make sql-mcp`);
   `ordered: true` where the question asks for a ranking; `must_mention` where the agent's notes
@@ -214,7 +214,8 @@ data/                     # gitignored; raw downloads (data/raw/secom, data/raw/
   columns as the reference. `make eval-sql` (PAID; needs
   `LLM_ALLOW_PAID=true` and a running sql-mcp; `DRY=1` prints the plan and worst-case cost and
   calls nothing) runs sql and refuse questions, with a per-run cap of questions x 4 and no fallback
-  provider for that command only.
+  provider for that command only. Every real run appends a row (date, run_id, commit, model/tier,
+  golden size, accuracy, calls, cost, note) to `eval/RESULTS.md`; `NOTE=...` fills the note.
 - **No authentication in local development.** Per the MCP authorization spec (2026-07-28),
   authorization is OPTIONAL, and HTTP-based servers that offer it follow OAuth 2.1 (the server is a
   resource server publishing OAuth 2.0 Protected Resource Metadata, RFC 9728, and accepting only
@@ -306,7 +307,10 @@ Details are for the `cell` service, snapshot complete/l_cell.zip dated 2026-10-1
 - (k) Licensee names are not unique per company: the same licensee id / FRN appears with different
   spellings ("NEW CINGULAR WIRELESS PCS, LLC" 177 and "New Cingular Wireless PCS, LLC" 138 active
   licences, same FRN 0003291192; "Cellco Partnership" 418 and "CELLCO PARTNERSHIP" 4). Counting by
-  name splits them; counting by `licensee_frn` or `licensee_id` does not.
+  name splits them; counting by `licensee_frn` or `licensee_id` does not. Group by `licensee_frn`
+  alone (grouping by FRN and name together splits the company too) and show `min(licensee_name)`.
+  Some licences have a NULL FRN (e.g. 41 expired ones under 29 spellings of one operator), which
+  forms its own group. The `v_uls_licences` comments say this (migration 0011).
 
 ## Working rules
 

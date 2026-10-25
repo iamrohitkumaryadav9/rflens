@@ -122,3 +122,27 @@ def test_the_comments_cite_the_source_and_no_longer_call_every_row_a_licence(
         assert "lease" in comment and "2,290 licences" in comment and "3,174" in comment
     for relation in ("v_uls_licences", "uls_hd"):
         assert "lease identifier" in column_comment(relation, "call_sign")
+
+
+def test_licensee_comments_say_companies_are_identified_by_frn_alone(conn: Connection) -> None:
+    """Migration 0011: one FRN can appear under several name spellings."""
+
+    def comment(column: str) -> str:
+        return conn.execute(
+            text(
+                "SELECT col_description(a.attrelid, a.attnum) FROM pg_attribute a "
+                "WHERE a.attrelid = 'v_uls_licences'::regclass AND a.attname = :c"
+            ),
+            {"c": column},
+        ).scalar_one()
+
+    for column in ("licensee_name", "licensee_frn"):
+        c = comment(column)
+        assert "several name spellings or capitalisations" in c
+        assert "licensee_frn" in c and "min(licensee_name)" in c
+    assert "do not count or rank companies by licensee_name" in comment("licensee_name")
+    assert "together with licensee_name" in comment("licensee_name")
+    assert "NULL for some licences" in comment("licensee_frn")
+    # general advice only: no company names in the comments (they would leak golden answers)
+    for column in ("licensee_name", "licensee_frn"):
+        assert not any(w in comment(column).lower() for w in ("cellco", "cingular", "alltel"))

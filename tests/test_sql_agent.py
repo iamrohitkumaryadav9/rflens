@@ -349,7 +349,7 @@ def test_golden_file_structure_and_contents(tools, qtext) -> None:
     golden = load_golden()
     assert problems(golden) == []
     by_type = {t: [q for q in golden if q.type == t] for t in ("sql", "refuse")}
-    assert (len(by_type["sql"]), len(by_type["refuse"]), len(golden)) == (15, 3, 18)
+    assert (len(by_type["sql"]), len(by_type["refuse"]), len(golden)) == (17, 3, 20)
     by_id = {q.id: q for q in golden}
     assert by_id["sql-10"].question == (
         "How many cellular licences and how many spectrum leases expired in 2020?"
@@ -369,6 +369,15 @@ def test_golden_file_structure_and_contents(tools, qtext) -> None:
     assert top3[2][1] == 283 and "278" in by_id["sql-06"].notes  # rank 4 is lower: no tie
     assert by_id["sql-15"].reference_result.rows == [["AST & Science, LLC", 1439]]
     assert "446" in by_id["sql-15"].notes  # rank 2 is lower
+    # held-out questions for the FRN comment fix (migration 0011)
+    assert by_id["sql-16"].reference_result.rows == [[154]]  # by name it would be 166
+    assert (
+        "NOT is_lease" in by_id["sql-16"].reference_sql
+        and "DISTINCT licensee_frn" in by_id["sql-16"].reference_sql
+    )
+    assert by_id["sql-17"].reference_result.rows == [["0002210086", 11]]
+    assert "licensee_frn IS NOT NULL" in by_id["sql-17"].reference_sql
+    assert "Rank 1 has 11, rank 2 has 5" in by_id["sql-17"].notes
     assert {q.status for q in golden} == {"reviewed"}
     assert next(q for q in golden if q.id == "sql-08").question == (
         "How many licensed cellular transmitter locations are in Texas?"
@@ -388,7 +397,7 @@ def test_golden_file_structure_and_contents(tools, qtext) -> None:
     for q in by_type["refuse"]:
         assert q.expected_refusal and q.reference_sql is None
     ranked = {q.id for q in golden if q.ordered}
-    assert ranked == {"sql-03", "sql-06", "sql-07", "sql-11", "sql-13", "sql-15"}
+    assert ranked == {"sql-03", "sql-06", "sql-07", "sql-11", "sql-13", "sql-15", "sql-17"}
     erp = next(q for q in golden if q.id == "sql-09")
     assert erp.must_mention == ["unknown"] and "UNKNOWN" in erp.notes
     assert all(
