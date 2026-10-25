@@ -28,8 +28,12 @@ jobs:
       SQL_READER_PASSWORD: ci-only-sql-reader-password
       SQL_LOGGER_PASSWORD: ci-only-sql-logger-password
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      # Both actions run on Node 24 (the v4 / v6 majors ran on Node 20, which GitHub deprecates).
+      # checkout: latest release v7.0.1 (2026-07-20), floating major tag v7.
+      # setup-uv: latest release v10.3.2 (2026-10-22). It has no floating major tag any more
+      # (immutable releases since v8), so it is pinned to the exact release.
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.2
       - run: uv sync --frozen
       - run: uv run ruff check .
       - run: uv run ruff format --check .
