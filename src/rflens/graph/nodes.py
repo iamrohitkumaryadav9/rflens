@@ -49,6 +49,7 @@ WRITER_EST_OVERHEAD_TOKENS = 700
 CAP_NOTE = "per-question call cap"
 # failures that come from the SQL itself: the SQL result is withheld when one is left after retries
 SQL_FAILURES = ("unsupported_sql_literal", "edge_side_mismatch")
+MAX_SQL_RETRIES = 1  # a SQL-side failure sends the question back to the SQL agent once
 
 
 @dataclass
@@ -331,10 +332,24 @@ def _column_flags(deps: GraphDeps, sql_text: str, columns: list[str]) -> dict[st
     return flags
 
 
+def _sql_retry_note(state: GraphState, failures: list[dict]) -> str:
+    previous = state.get("sql") or {}
+    lines = "\n".join(f"- {f['type']}: {f['detail']}" for f in failures)
+    sql_text = " ".join((previous.get("executed_sql") or previous.get("sql") or "").split())
+    return (
+        "Your previous SQL ran, but the answer built on it failed verification.\n"
+        f"Previous SQL: {sql_text}\n"
+        f"Problems:\n{lines}\n"
+        "Write a corrected SQL that fixes exactly these problems and still keeps every "
+        "constraint of the question."
+    )
+
+
 def make_sql_agent(deps: GraphDeps):
     def sql_agent(state: GraphState) -> dict:
         qid = state["question_id"]
         deps.run.seed_question(qid)
+        feedback = state.get("sql_feedback") or []
         context = None
         if state["route"] == "mixed":
             # the original question goes in as the question (and is what sql_query_log records);
@@ -344,6 +359,8 @@ def make_sql_agent(deps: GraphDeps):
                 state.get("chunks") or [],
                 deps.settings.orch_evidence_chars,
             )
+        if feedback:
+            context = "\n\n".join(p for p in (context, _sql_retry_note(state, feedback)) if p)
         try:
             result = answer_question(
                 state["question"],
@@ -375,6 +392,15 @@ def make_sql_agent(deps: GraphDeps):
                 deps, result.executed_sql or result.sql or "", result.columns
             )
         update: dict = {"sql": sql, "node_stats": {"sql_agent": stat}}
+        if feedback:
+            # the new SQL gets a fresh writer chain; the old draft and verdict no longer apply
+            update |= {
+                "sql_feedback": [],
+                "sql_retries": state.get("sql_retries", 0) + 1,
+                "writer_attempts": 0,
+                "draft": "",
+                "verification": {},
+            }
         if result.status == "failed" and any(CAP_NOTE in n for n in result.notes):
             update["halt"] = next(n for n in result.notes if CAP_NOTE in n)
         return update
@@ -412,7 +438,7 @@ def make_writer(deps: GraphDeps):
                 )
             ),
         ]
-        if attempts:
+        if attempts and state.get("draft"):
             failures = (state.get("verification") or {}).get("failures") or []
             messages += [
                 Message.assistant(state.get("draft") or ""),
@@ -452,15 +478,22 @@ def verifier(state: GraphState) -> dict:
         sql_question=(state.get("plan") or {}).get("sql_question") or "",
     )
     # every draft and its failures stay in the checkpoint, so a redacted answer can be explained
+    history = state.get("draft_history") or []
     entry = {
-        "attempt": state.get("writer_attempts", 0),
+        "attempt": len(history) + 1,
         "draft": state.get("draft") or "",
         "ok": result["ok"],
         "failures": result["failures"],
     }
+    # only SQL-side failures: the writer cannot fix them, so send the question back to the SQL
+    # agent (once); prose failures stay with the writer
+    kinds = {f["type"] for f in result["failures"]}
+    sql_only = bool(kinds) and kinds <= set(SQL_FAILURES)
+    retry = sql_only and state.get("sql_retries", 0) < MAX_SQL_RETRIES
     return {
         "verification": result,
-        "draft_history": [*(state.get("draft_history") or []), entry],
+        "draft_history": [*history, entry],
+        "sql_feedback": result["failures"] if retry else [],
         "node_stats": {"verifier": {"calls": 0}},
     }
 

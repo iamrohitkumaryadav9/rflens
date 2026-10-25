@@ -1,4 +1,4 @@
-.PHONY: up down migrate test-db test lint run load-secom load-uls load-fcc-eas fetch-3gpp chunk-3gpp embed-3gpp eval-smoke docs-mcp sql-mcp llm-spend golden-refresh eval-sql eval-docs load-spec-bands results-header ci-local
+.PHONY: up down migrate test-db test lint run load-secom load-uls load-fcc-eas fetch-3gpp chunk-3gpp embed-3gpp eval-smoke docs-mcp sql-mcp llm-spend golden-refresh eval-sql eval-docs load-spec-bands orchestrate orchestrate-resume orchestrate-status results-header ci-local
 
 up:
 	docker compose up -d --wait
@@ -32,6 +32,17 @@ load-fcc-eas:
 # Parse the operating-band tables of the spec chunks into spec_operating_bands (needs chunk-3gpp output).
 load-spec-bands:
 	uv run python -m rflens.ingest.spec_bands --load
+
+# The orchestrator from a terminal (see src/rflens/graph/cli.py): plan and wait at the approval
+# prompt; resume the saved thread in a new process; show its checkpoint and LLM calls.
+orchestrate:
+	uv run python -u -m rflens.graph.cli run --question "$(Q)" --thread "$(THREAD)" $(if $(ASK),--ask)
+
+orchestrate-resume:
+	uv run python -u -m rflens.graph.cli resume --thread "$(THREAD)" --decision "$(or $(DECISION),approve)" $(if $(SPEC),--spec "$(SPEC)")
+
+orchestrate-status:
+	uv run python -m rflens.graph.cli status --thread "$(THREAD)"
 
 fetch-3gpp:
 	uv run python -m rflens.ingest.spec_fetch

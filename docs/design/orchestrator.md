@@ -146,10 +146,26 @@ No LLM, no database. Failure types:
 - `band_joins` (information, not a failure): the `(spec, band)` literals the SQL filters
   `spec_operating_bands` on.
 
+## Retry routing after a failed verification
+
+Which node tries again depends on what failed:
+
+| failures | next | why |
+|---|---|---|
+| none | finalize | |
+| only SQL-side (`edge_side_mismatch`, `unsupported_sql_literal`) and the SQL has not been retried | **sql_agent**, once, with the failures and the previous SQL in its context | the writer cannot fix a wrong SQL |
+| only SQL-side, and the retry did not fix it | redact (the SQL result is withheld) | another writer pass changes nothing |
+| prose (`unsupported_number`, `unsupported_quote`, `invented_unit`, `missing_assumption_wording`, citation failures), or SQL-side mixed with prose | writer, up to `ORCH_MAX_WRITER_RETRIES` (2) | the prose is what can change |
+
+After a SQL retry the new SQL gets a fresh writer chain (`writer_attempts` back to 0, no old draft,
+no correction message about the old SQL). `sql_retries` and `sql_feedback` are state keys;
+`draft_history` numbers drafts across both chains. The per-question call cap (10) still bounds all
+of it: a retry that would exceed it ends the question `failed`.
+
 After `1 + 2` failed drafts, `redact` applies. Statuses: `answered`, `partial`, `refused`,
 `failed`, `cancelled`.
 
-## Kill-and-resume demo (step 3, not built)
+## Kill-and-resume demo (built in step 3)
 
 `make orchestrate Q="<mixed question>" THREAD=demo-1 ASK=1` runs the planner, prints the plan, saves
 a checkpoint and waits at the approval prompt. From another terminal, hard-kill that process; show
@@ -157,6 +173,29 @@ thread `demo-1` in `checkpoints.checkpoints`. `make orchestrate-resume THREAD=de
 in a brand-new process runs the remaining nodes and prints the final answer with Sources.
 Evidence: `llm_calls` for that question_id shows two run ids and exactly one planner call. Also
 runnable offline with the fake provider.
+
+Built as `rflens.graph.cli` (`run`, `resume`, `status`; `make orchestrate`,
+`make orchestrate-resume`, `make orchestrate-status`):
+
+- `run` prints the plan (route, spec, bands, `doc_query`, `sql_question`, estimated worst-case cost
+  against the remaining budget, and why approval is needed), prints its pid, and waits at
+  `approve / edit / cancel`. The checkpoint is written before the prompt (`durability="sync"`).
+  Without a terminal (stdin closed) it exits with code 3 and leaves the thread saved. A thread id
+  that already has a checkpoint is refused.
+- `resume` (`DECISION=approve|cancel`, optional `SPEC=`) opens the saved thread in the new process:
+  at the approval interrupt it resumes with the decision, if the process died between nodes it runs
+  the next node from the last checkpoint (`invoke(None)`), if the thread is finished it reports it.
+  It prints the SQL, the final answer with Sources, the verification result, the comparison with the
+  golden reference when the question is a golden question, and calls and cost per node.
+- `status` prints the number of checkpoints, the latest checkpoint, the next node(s), the pending
+  approval reasons, the plan, and from `llm_calls` the run ids that made calls for the question id
+  with calls and cost per node.
+- Offline: `LLM_PROVIDER=fake`, `LLM_FALLBACK=` and `RFLENS_FAKE_SCRIPT=<json list of answers>`
+  script the model (the MCP servers are still real). `tests/test_orchestrate_cli.py` does exactly
+  this with real subprocesses: it kills the process at the prompt (the interpreter that printed its
+  pid), resumes in a new one and asserts one planner call, two run ids and a final answer.
+- A hard kill must hit the interpreter that printed its pid. On Windows the `.venv` python is a
+  launcher in front of the real interpreter; killing only the launcher is not a hard kill.
 
 ## End-to-end scoring (not built)
 
@@ -211,6 +250,16 @@ structured facts, so they are looked up, not searched.
   example a downlink edge used for an uplink question), which only the end-to-end reference
   comparison (`make eval-e2e`) catches.
 
+## Project convention: "inside" a range
+
+A frequency record is **inside** a range when its whole assigned block lies within it:
+`frequency_assigned >= low AND COALESCE(frequency_upper_band, frequency_assigned) <= high` (for a
+band, `low` / `high` are the `ul_*` or `dl_*` columns of `spec_operating_bands`). This is rule 10 of
+the SQL agent prompt (with "keep every constraint of the question": status filters such as
+"active", counts, ranks) and it is the convention of the golden mixed questions. It is a project
+decision, not a fact about the data: an engineer who means "overlaps" must say so, and the agent
+states the interpretation in `assumptions`.
+
 ## Provenance versus meaning
 
 The verifier proves that every number, quotation and band edge in the answer comes from the
@@ -244,3 +293,4 @@ causes were fixed where they arose, and the remaining gap is stated:
   searched with the full question text).
 - Mixed questions look up named bands in `spec_operating_bands` instead of searching (the step 2b `doc_query`-only retrieval did not find the expected chunks).
 - The SQL agent of a mixed question is given the original question plus `sql_question` as context (step 2b used `sql_question` alone, which dropped constraints).
+- Retry routing: SQL-side failures go back to the SQL agent once instead of the writer (step 3); the writer retries remain for prose failures.

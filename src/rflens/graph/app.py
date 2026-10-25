@@ -104,6 +104,11 @@ def build_graph(deps: nodes.GraphDeps, checkpointer: Any):
     def after_verifier(state: GraphState) -> str:
         if state["verification"]["ok"]:
             return "finalize"
+        if state.get("sql_feedback"):  # SQL-side failures only, first time: back to the SQL agent
+            return "sql_agent"
+        kinds = {f["type"] for f in state["verification"]["failures"]}
+        if kinds <= set(nodes.SQL_FAILURES):  # SQL-side failures that a retry did not fix
+            return "redact"
         return "writer" if state.get("writer_attempts", 0) <= max_retries else "redact"
 
     g.add_edge(START, "planner")
@@ -112,7 +117,9 @@ def build_graph(deps: nodes.GraphDeps, checkpointer: Any):
     g.add_conditional_edges("doc_agent", _after_doc, ["sql_agent", "writer", "finalize"])
     g.add_conditional_edges("sql_agent", _after_sql, ["writer", "finalize"])
     g.add_conditional_edges("writer", _after_writer, ["verifier", "finalize"])
-    g.add_conditional_edges("verifier", after_verifier, ["writer", "redact", "finalize"])
+    g.add_conditional_edges(
+        "verifier", after_verifier, ["writer", "sql_agent", "redact", "finalize"]
+    )
     g.add_edge("redact", "finalize")
     g.add_edge("finalize", END)
     return g.compile(checkpointer=checkpointer)
@@ -153,6 +160,34 @@ def ask(graph, question: str, question_id: str) -> Outcome:
 def resume(graph, question_id: str, decision: Any) -> Outcome:
     config = {"configurable": {"thread_id": question_id}}
     result = graph.invoke(Command(resume=decision), config, durability=DURABILITY)
+    return _outcome(graph, question_id, result)
+
+
+def thread_config(question_id: str) -> dict:
+    return {"configurable": {"thread_id": question_id}}
+
+
+def start_thread(graph, question: str, question_id: str) -> Outcome:
+    """Alias of `ask` for the command line: plan, checkpoint, stop at an interrupt or finish."""
+    return ask(graph, question, question_id)
+
+
+def continue_thread(graph, question_id: str, decision: Any = None) -> Outcome:
+    """Carry a saved thread on in this process.
+
+    - waiting at the approval interrupt: resume it with `decision`;
+    - stopped between nodes (the process was killed): run the next node from the last checkpoint;
+    - finished: just report it.
+    """
+    config = thread_config(question_id)
+    snapshot = graph.get_state(config)
+    if not snapshot.next:
+        return Outcome(
+            question_id, dict(snapshot.values), None, snapshot.values.get("node_stats", {})
+        )
+    if any(task.interrupts for task in snapshot.tasks):
+        return resume(graph, question_id, decision)
+    result = graph.invoke(None, config, durability=DURABILITY)
     return _outcome(graph, question_id, result)
 
 

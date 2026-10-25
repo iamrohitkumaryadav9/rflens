@@ -335,6 +335,18 @@ data/                     # gitignored; raw downloads (data/raw/secom, data/raw/
     the planner's `sql_question` as context (the original's constraints win; the SQL prompt rule
     10 keeps every constraint and defines "inside" as the whole assigned block), and
     `draft_history` keeps every writer draft and its failures in the checkpoint.
+  - **Retry routing:** a verification that fails only with SQL-side failures
+    (`edge_side_mismatch`, `unsupported_sql_literal`) sends the question back to the SQL agent once,
+    with the failures and the previous SQL; prose failures go to the writer (up to 2 retries); the
+    per-question cap of 10 bounds everything. "Inside a range" = the whole assigned block lies
+    within it is a project convention (SQL prompt rule 10; docs/design/orchestrator.md).
+  - **Command line:** `make orchestrate Q="..." THREAD=<id> ASK=1` (plan, print, checkpoint, wait at
+    approve / edit / cancel), `make orchestrate-resume THREAD=<id> DECISION=approve|cancel` (a new
+    process continues the thread), `make orchestrate-status THREAD=<id>` (latest checkpoint, next
+    node, run ids and calls per node from `llm_calls`); `rflens.graph.cli`. A hard kill must hit
+    the pid the program prints (on Windows the venv launcher is a separate process).
+    `scripts/demo_kill_resume.py` scripts the whole demo; offline it runs with
+    `LLM_PROVIDER=fake RFLENS_FAKE_SCRIPT=<json>` (tests/test_orchestrate_cli.py).
   - Live smoke (`scripts/graph_smoke.py`, approval auto): sql-01 and doc-02 answered and verified.
     After the fixes mixed-01 (top 5 licensees, band 5 uplink) and mixed-02 (116,525) were
     `answered`, verified and equal to the golden reference under the relaxed compare, each SQL

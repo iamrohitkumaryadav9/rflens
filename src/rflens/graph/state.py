@@ -36,6 +36,8 @@ class GraphState(TypedDict, total=False):
     band_lookup: dict[str, Any] | None  # {query_id, requested, found, missing} of the band lookup
     # writer / verifier
     draft: str
+    sql_retries: int  # SQL-side verification failures answered by a second SQL attempt
+    sql_feedback: list[dict[str, Any]]  # the failures the SQL agent is to fix (else empty)
     draft_history: list[dict[str, Any]]  # every writer draft with its verification failures
     writer_attempts: int
     verification: dict[str, Any]

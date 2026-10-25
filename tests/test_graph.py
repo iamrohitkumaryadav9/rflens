@@ -333,9 +333,11 @@ def test_nothing_verifiable_falls_back_to_the_evidence_itself(make_env, tag) -> 
 def test_an_invented_band_edge_withholds_the_sql_result(make_env, tag) -> None:
     sql = sql_answer(BAND_SQL.format(low=814, high=849))
     draft = write(MIXED_DRAFT)
-    env = make_env([plan("mixed", "36.101"), sql, draft, draft, draft])
+    # the SQL is sent back once (the same invented edge again), the writer is not retried
+    env = make_env([plan("mixed", "36.101"), sql, draft, sql, draft])
     out = env.ask(f"How many licences are inside the LTE band 5 uplink of TS 36.101? {tag}")
     assert out.status == "partial"
+    assert (out.stats["sql_agent"]["calls"], out.stats["writer"]["calls"]) == (2, 2)
     assert out.state["verification"]["redacted"] == ["unsupported_sql_literal"]
     assert out.state["sql"] is None and out.state["verification"]["withheld_sql_query_id"]
     assert "[S1]" not in out.state["answer"].split("Note:")[0]
@@ -886,7 +888,9 @@ def test_downlink_columns_for_an_uplink_question_are_refused_and_withheld(
     make_env, tag, band_rows
 ) -> None:
     wrong = sql_with_band_join("dl_low_mhz", "dl_high_mhz")
-    env = make_env([plan("mixed", "36.101", bands=LOOKUP), wrong, *[write(JOIN_DRAFT)] * 3])
+    env = make_env(
+        [plan("mixed", "36.101", bands=LOOKUP), wrong, write(JOIN_DRAFT), wrong, write(JOIN_DRAFT)]
+    )
     out = env.ask(MIXED_Q.format(tag=tag))
     assert out.status == "partial"
     assert out.state["verification"]["redacted"] == ["edge_side_mismatch"]
@@ -912,3 +916,81 @@ def test_every_writer_draft_and_its_failures_are_kept_in_the_checkpoint(make_env
             {"configurable": {"thread_id": env.thread}}
         )
     assert snapshot.values["draft_history"] == history
+
+
+# --- retry routing: SQL-side failures to the SQL agent, prose to the writer --------------------
+
+
+def test_a_sql_side_failure_goes_back_to_the_sql_agent_once_with_the_failure(
+    make_env, tag, band_rows
+) -> None:
+    wrong = sql_with_band_join("dl_low_mhz", "dl_high_mhz")  # downlink columns, uplink question
+    right = sql_with_band_join("ul_low_mhz", "ul_high_mhz")
+    env = make_env(
+        [
+            plan("mixed", "36.101", bands=LOOKUP),
+            wrong,
+            write(JOIN_DRAFT),
+            right,
+            write(JOIN_DRAFT),
+        ]
+    )
+    out = env.ask(MIXED_Q.format(tag=tag))
+    assert out.status == "answered", out.state["verification"]
+    assert [c[0][0].role for c in env.provider.calls] == ["system"] * 5
+    retry_input = env.provider.calls[3][0][1].content  # the second SQL attempt's user message
+    assert "failed verification" in retry_input and "edge_side_mismatch" in retry_input
+    assert "b.dl_low_mhz" in retry_input  # the previous SQL is shown
+    assert out.state["sql_retries"] == 1 and out.state["sql_feedback"] == []
+    stats = out.stats
+    assert (stats["planner"]["calls"], stats["sql_agent"]["calls"], stats["writer"]["calls"]) == (
+        1,
+        2,
+        2,
+    )
+    history = out.state["draft_history"]
+    assert [(h["attempt"], h["ok"]) for h in history] == [(1, False), (2, True)]
+    assert history[0]["failures"][0]["type"] == "edge_side_mismatch"
+    assert "b.ul_low_mhz" in out.state["sql"]["executed_sql"]
+    # the writer of the second round starts fresh: no correction message about the old SQL
+    assert [m.role for m in env.provider.calls[4][0]] == ["system", "user"]
+
+
+def test_a_prose_failure_goes_to_the_writer_and_not_to_the_sql_agent(make_env, tag) -> None:
+    env = make_env(
+        [
+            plan("sql"),
+            GOOD_SQL,
+            write("It was measured 777 times [S1]."),
+            write("The answer is 42 [S1]."),
+        ]
+    )
+    out = env.ask(f"What is forty one plus one? {tag}")
+    assert out.status == "answered"
+    assert (out.stats["sql_agent"]["calls"], out.stats["writer"]["calls"]) == (1, 2)
+    assert out.state.get("sql_retries", 0) == 0
+
+
+def test_a_sql_failure_next_to_a_prose_failure_goes_to_the_writer_first(
+    make_env, tag, band_rows
+) -> None:
+    wrong = sql_with_band_join("dl_low_mhz", "dl_high_mhz")
+    both = write("The database count is 777 [S1]. Band 5 uplink spans 824 MHz to 849 MHz [D1].")
+    env = make_env([plan("mixed", "36.101", bands=LOOKUP), wrong, both, both, both])
+    out = env.ask(MIXED_Q.format(tag=tag))
+    kinds = {f["type"] for f in out.state["draft_history"][0]["failures"]}
+    assert {"edge_side_mismatch", "unsupported_number"} <= kinds
+    assert out.stats["sql_agent"]["calls"] == 1  # mixed failures are not a SQL-only retry
+    assert out.stats["writer"]["calls"] == 3 and out.status == "partial"
+
+
+def test_the_sql_retry_is_bounded_by_the_per_question_cap(make_env, tag, band_rows) -> None:
+    wrong = sql_with_band_join("dl_low_mhz", "dl_high_mhz")
+    env = make_env(
+        [plan("mixed", "36.101", bands=LOOKUP), wrong, write(JOIN_DRAFT), wrong, write(JOIN_DRAFT)],
+        orch_max_calls_per_question=3,
+    )
+    out = env.ask(MIXED_Q.format(tag=tag))
+    # planner, SQL agent, writer used the 3 calls; the SQL retry could not start
+    assert out.status == "failed" and "per-question call cap" in out.state["answer"]
+    assert len(env.provider.calls) == 3
