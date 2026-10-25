@@ -191,3 +191,34 @@ def test_seed_question_starts_the_counter_at_the_ledger_count(qid) -> None:
     run.guard.per_question[qid] = 5
     run.seed_question(qid)
     assert run.guard.per_question[qid] == 5  # never lowered
+
+
+# --- migration 0014: a NULL key is not an entity -----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("table", "column"),
+    [
+        ("fcc_grantees", "country"),
+        ("fcc_test_firms", "country"),
+        ("v_uls_licences", "licensee_frn"),
+    ],
+)
+def test_key_columns_say_that_a_null_key_is_not_an_entity(table, column) -> None:
+    with get_engine().connect() as c:
+        comment = c.execute(
+            text(
+                "SELECT col_description(a.attrelid, a.attnum) FROM pg_attribute a "
+                "WHERE a.attrelid = CAST(:t AS regclass) AND a.attname = :c"
+            ),
+            {"t": table, "c": column},
+        ).scalar_one()
+    assert "A NULL key is not an entity" in comment and f"{column} IS NOT NULL" in comment
+    assert comment.count("A NULL key is not an entity") == 1  # applied once, not stacked
+
+
+def test_the_sql_prompt_tells_the_agent_to_leave_out_null_keys() -> None:
+    from rflens.agents.sql_prompt import RULES
+
+    assert "leave out rows whose\n   key is NULL" in RULES and "IS NOT NULL" in RULES
+    assert RULES.index("11. Rankings and counts") < RULES.index("12. Answer with the JSON object")

@@ -465,21 +465,21 @@ questions:
   author: human
   status: reviewed
   spec: 38.101-1
-  question: How much maximum power reduction is the UE allowed for different modulations and resource block allocations?
+  question: How much maximum power reduction is the NR UE allowed for different modulations and resource block allocations?
   expected_clauses:
   - 6.2.2
   expected_tables: []
-  notes: From the 3GPP smoke set (q03, moved here from eval/smoke_3gpp.yaml). The question was drafted by the assistant; the expected clauses and tables were reviewed by the project owner (status was reviewed-labels). Clause numbers only; no spec text.
+  notes: 'From the 3GPP smoke set (q03, moved here from eval/smoke_3gpp.yaml). The question was drafted by the assistant; the expected clauses and tables were reviewed by the project owner (status was reviewed-labels). Clause numbers only; no spec text. Reworded on 2026-10-26: the original wording names no spec; it was written when only TS 38.101-1 was embedded, and MPR and NS_04 exist in both TS 36.101 and TS 38.101-1, so the question now says NR. The target is unchanged.'
 - id: doc-04
   type: doc
   author: human
   status: reviewed
   spec: 38.101-1
-  question: What additional maximum power reduction applies when network signalling value NS_04 is used?
+  question: What additional maximum power reduction applies to an NR UE when network signalling value NS_04 is used?
   expected_clauses:
   - 6.2.3.2
   expected_tables: []
-  notes: From the 3GPP smoke set (q04, moved here from eval/smoke_3gpp.yaml). The question was drafted by the assistant; the expected clauses and tables were reviewed by the project owner (status was reviewed-labels). Clause numbers only; no spec text.
+  notes: 'From the 3GPP smoke set (q04, moved here from eval/smoke_3gpp.yaml). The question was drafted by the assistant; the expected clauses and tables were reviewed by the project owner (status was reviewed-labels). Clause numbers only; no spec text. Reworded on 2026-10-26: the original wording names no spec; it was written when only TS 38.101-1 was embedded, and MPR and NS_04 exist in both TS 36.101 and TS 38.101-1, so the question now says NR. The target is unchanged.'
 - id: doc-05
   type: doc
   author: human

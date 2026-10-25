@@ -44,6 +44,7 @@ class GeminiProvider:
         self.service_tier = settings.llm_service_tier
         self._key = settings.gemini_api_key
         self._thinking = settings.llm_thinking_budget.strip().lower()
+        self._temperature = settings.llm_temperature
         timeout = settings.llm_timeout_s
         if self.service_tier == "flex":
             timeout = max(timeout, FLEX_MIN_TIMEOUT_S)
@@ -75,6 +76,8 @@ class GeminiProvider:
             "maxOutputTokens": max_output_tokens,
             "thinkingConfig": self._thinking_config(),
         }
+        if self._temperature is not None:
+            generation["temperature"] = self._temperature
         if json_schema is not None:
             generation["responseMimeType"] = "application/json"
             generation["responseJsonSchema"] = json_schema

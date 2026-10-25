@@ -17,8 +17,11 @@ from sqlalchemy import Connection, text
 
 from rflens.config import get_retrieval_settings
 from rflens.retrieval.embedder import Embedder, vector_literal
+from rflens.retrieval.variants import extract_refs, is_downranked
 
 MODES = ("vector", "keyword", "hybrid")
+LOOKUP_CHUNKS = 3  # chunks fetched per named clause or table
+POOL_FACTOR = 10  # the variant rule re-orders the top k x 10 candidates
 
 
 def rrf(rankings: Mapping[str, Sequence[str]], k: int = 60) -> dict[str, float]:
@@ -46,6 +49,7 @@ class Hit:
     related_chunks: list[str]  # e.g. the notes chunk a split table points to
     vector_rank: int | None = None
     keyword_rank: int | None = None
+    via: str = "search"  # 'lookup' for a chunk fetched because the question names its clause
 
 
 def _spec_filter(spec: str | None) -> tuple[str, str]:
@@ -104,6 +108,57 @@ def keyword_search(
     return [(r.chunk_id, float(r.score)) for r in rows]
 
 
+_COLUMNS = """c.chunk_id, d.spec, d.version, c.clause, c.clause_title, c.kind,
+                       c.table_number, c.caption, c.table_part, c.text, c.metadata"""
+
+
+def _hit(row, score: float, via: str = "search", vec_rank=None, kw_rank=None) -> Hit:
+    return Hit(
+        chunk_id=row.chunk_id,
+        score=score,
+        spec=row.spec,
+        version=row.version,
+        clause=row.clause,
+        clause_title=row.clause_title,
+        kind=row.kind,
+        table_number=row.table_number,
+        caption=row.caption,
+        table_part=row.table_part,
+        text=row.text,
+        related_chunks=list(row.metadata.get("related_chunks", [])),
+        vector_rank=vec_rank,
+        keyword_rank=kw_rank,
+        via=via,
+    )
+
+
+def lookup_refs(
+    conn: Connection, clauses: list[str], tables: list[str], spec: str | None
+) -> list[Hit]:
+    """The chunks of the named clauses and tables, first LOOKUP_CHUNKS of each in document order;
+    one spec, or both when `spec` is None."""
+    hits: list[Hit] = []
+    seen: set[str] = set()
+    spec_where = "AND d.spec = :spec" if spec else ""
+    for column, values in (("c.clause", clauses), ("c.table_number", tables)):
+        for value in values:
+            rows = conn.execute(
+                text(
+                    f"""
+                    SELECT {_COLUMNS} FROM chunks c JOIN documents d ON d.id = c.document_id
+                    WHERE {column} = :v {spec_where}
+                    ORDER BY d.spec, (c.metadata->>'position')::int, c.chunk_id LIMIT :n
+                    """
+                ),
+                {"v": value, "spec": spec, "n": LOOKUP_CHUNKS},
+            ).all()
+            for row in rows:
+                if row.chunk_id not in seen:
+                    seen.add(row.chunk_id)
+                    hits.append(_hit(row, 1.0, via="lookup"))
+    return hits
+
+
 def search(
     conn: Connection,
     embedder: Embedder,
@@ -114,14 +169,24 @@ def search(
     candidates: int | None = None,
     rrf_k: int | None = None,
     spec: str | None = None,
+    context: str | None = None,
+    clause_lookup: bool | None = None,
+    variant_downrank: bool | None = None,
 ) -> list[Hit]:
-    """Search the chunks. `mode` defaults to the configured RETRIEVAL_MODE (interim: vector)."""
+    """Search the chunks. `mode` defaults to the configured RETRIEVAL_MODE (interim: vector).
+
+    `clause_lookup` and `variant_downrank` default to the CLAUSE_LOOKUP / VARIANT_DOWNRANK
+    settings. `context` is the text in which the variant rule looks for topic words (the question
+    itself when the query is a rewrite of it); it defaults to the query.
+    """
     settings = get_retrieval_settings()
     mode = mode or settings.retrieval_mode
     if mode not in MODES:
         raise ValueError(f"mode must be one of {MODES}")
     candidates = candidates or settings.search_candidates
     rrf_k = rrf_k or settings.rrf_k
+    lookup_on = settings.clause_lookup if clause_lookup is None else clause_lookup
+    rerank_on = settings.variant_downrank if variant_downrank is None else variant_downrank
     vec = vector_search(conn, embedder, query, k=candidates, spec=spec) if mode != "keyword" else []
     kw = keyword_search(conn, query, k=candidates, spec=spec) if mode != "vector" else []
     vec_rank = {cid: i for i, (cid, _) in enumerate(vec, start=1)}
@@ -132,40 +197,36 @@ def search(
         ordered = dict(kw)
     else:
         ordered = rrf({"vector": [c for c, _ in vec], "keyword": [c for c, _ in kw]}, rrf_k)
-    top = sorted(ordered.items(), key=lambda kv: (-kv[1], kv[0]))[:top_k]
-    if not top:
-        return []
-    ids = [cid for cid, _ in top]
-    rows = {
-        r.chunk_id: r
-        for r in conn.execute(
-            text(
-                """
-                SELECT c.chunk_id, d.spec, d.version, c.clause, c.clause_title, c.kind,
-                       c.table_number, c.caption, c.table_part, c.text, c.metadata
-                FROM chunks c JOIN documents d ON d.id = c.document_id
-                WHERE c.chunk_id = ANY(CAST(:ids AS text[]))
-                """
-            ),
-            {"ids": ids},
-        )
-    }
-    return [
-        Hit(
-            chunk_id=cid,
-            score=score,
-            spec=rows[cid].spec,
-            version=rows[cid].version,
-            clause=rows[cid].clause,
-            clause_title=rows[cid].clause_title,
-            kind=rows[cid].kind,
-            table_number=rows[cid].table_number,
-            caption=rows[cid].caption,
-            table_part=rows[cid].table_part,
-            text=rows[cid].text,
-            related_chunks=list(rows[cid].metadata.get("related_chunks", [])),
-            vector_rank=vec_rank.get(cid),
-            keyword_rank=kw_rank.get(cid),
-        )
-        for cid, score in top
-    ]
+    pool = top_k * POOL_FACTOR if rerank_on else top_k
+    top = sorted(ordered.items(), key=lambda kv: (-kv[1], kv[0]))[:pool]
+    hits: list[Hit] = []
+    if top:
+        ids = [cid for cid, _ in top]
+        rows = {
+            r.chunk_id: r
+            for r in conn.execute(
+                text(
+                    f"""
+                    SELECT {_COLUMNS} FROM chunks c JOIN documents d ON d.id = c.document_id
+                    WHERE c.chunk_id = ANY(CAST(:ids AS text[]))
+                    """
+                ),
+                {"ids": ids},
+            )
+        }
+        hits = [
+            _hit(rows[cid], score, vec_rank=vec_rank.get(cid), kw_rank=kw_rank.get(cid))
+            for cid, score in top
+        ]
+    if rerank_on:  # stable: variant clauses whose topic is not mentioned move behind the rest
+        topic_text = context or query
+        keep = [h for h in hits if not is_downranked(h.spec, h.clause, topic_text)]
+        later = [h for h in hits if is_downranked(h.spec, h.clause, topic_text)]
+        hits = keep + later
+    if lookup_on:
+        clauses, tables = extract_refs(query if context is None else f"{query}\n{context}")
+        if clauses or tables:
+            looked = lookup_refs(conn, clauses, tables, spec)
+            names = {h.chunk_id for h in looked}
+            hits = looked + [h for h in hits if h.chunk_id not in names]
+    return hits[:top_k]

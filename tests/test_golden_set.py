@@ -198,3 +198,18 @@ def test_assistant_refuse_questions(qid: str, word: str) -> None:
         assert "home address" in q.question and "KNKA209" in q.question
     if qid == "refuse-06":
         assert "will be active" in q.question
+
+
+def test_doc_03_and_doc_04_say_nr_and_record_why() -> None:
+    for qid in ("doc-03", "doc-04"):
+        q = BY_ID[qid]
+        assert " NR " in q.question and q.spec == "38.101-1" and q.status == "reviewed"
+        assert "names no spec" in q.notes and "exist in both" in q.notes
+    assert BY_ID["doc-03"].expected_clauses == ["6.2.2"]
+    assert BY_ID["doc-04"].expected_clauses == ["6.2.3.2"]
+    assert "NS_04" in BY_ID["doc-04"].question
+    # doc-12 stays as written
+    assert BY_ID["doc-12"].question == (
+        "What additional maximum power reduction applies when network signalling value NS_37 "
+        "is used?"
+    )

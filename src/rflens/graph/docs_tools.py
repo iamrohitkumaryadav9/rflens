@@ -39,10 +39,14 @@ class DocsMcpTools:
             raise DocsMcpError(result.content[0].text)
         return result.structured_content
 
-    def search(self, query: str, spec: str | None, mode: str, k: int) -> list[dict]:
+    def search(
+        self, query: str, spec: str | None, mode: str, k: int, context: str | None = None
+    ) -> list[dict]:
         arguments: dict[str, Any] = {"query": query, "mode": mode, "k": k}
         if spec:
             arguments["spec"] = spec
+        if context:
+            arguments["context"] = context
         return self._call("search_docs", arguments)["results"]
 
     def get_chunk(self, chunk_id: str) -> dict:

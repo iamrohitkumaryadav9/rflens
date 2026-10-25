@@ -44,6 +44,7 @@ from rflens.llm.base import (
     estimate_tokens,
 )
 from rflens.llm.gateway import LLMRun
+from rflens.retrieval.variants import extract_refs
 
 ROUTES = ("sql", "doc", "mixed", "refuse")
 WRITER_EST_OVERHEAD_TOKENS = 700
@@ -283,6 +284,16 @@ def _chunk_entry(full: dict, ref: str, room: int, band_lines: list[str] | None =
     return entry
 
 
+def _query_with_refs(query: str, question: str) -> str:
+    """The search text. A clause or table number the question names must survive the planner's
+    rewrite (docs-mcp fetches it directly), so any that the rewrite dropped is put back."""
+    clauses, tables = extract_refs(question)
+    lowered = query.lower()
+    missing = [f"clause {c}" for c in clauses if c.lower() not in lowered]
+    missing += [f"Table {t}" for t in tables if t.lower() not in lowered]
+    return f"{query} {' '.join(missing)}" if missing else query
+
+
 def _hit_summary(hit: dict, rank: int) -> dict:
     """A search result (or fetched chunk) reduced to what an eval needs to judge retrieval."""
     return {
@@ -327,10 +338,11 @@ def make_doc_agent(deps: GraphDeps):
                     }
             else:
                 hits = deps.docs_tools.search(
-                    plan.get("doc_query") or state["question"],
+                    _query_with_refs(plan.get("doc_query") or state["question"], state["question"]),
                     state.get("spec"),
                     s.orch_retrieval_mode,
                     s.orch_doc_k,
+                    state["question"],  # topic words for the variant-clause rule
                 )
                 doc_hits = [_hit_summary(h, i) for i, h in enumerate(hits, start=1)]
                 used = 0

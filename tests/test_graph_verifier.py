@@ -407,3 +407,55 @@ def test_other_groupings_and_other_relations_are_not_touched() -> None:
 def test_the_rule_applies_to_mixed_questions_too() -> None:
     sql = "SELECT licensee_name, count(*) FROM v_uls_licences GROUP BY licensee_name"
     assert kinds(frn_check(sql, route="mixed")) == ["frn_name_grouping"]
+
+
+# --- missing_band_citation ------------------------------------------------------------------------
+
+BAND_CHUNK = {
+    **CHUNK,
+    "band_lines": ["TS 36.101 band 5: uplink 824-849 MHz, downlink 869-894 MHz, FDD"],
+}
+
+
+def test_an_answer_must_cite_a_chunk_that_supplied_band_rows() -> None:
+    sql = sql_result(
+        rows=[[41]], columns=["n"], executed=BAND_JOIN_SQL.format(lo="ul_low_mhz", hi="ul_high_mhz")
+    )
+    cites_sql_only = verify(
+        "The uplink count is 41 [S1].",
+        question="How many in the uplink of band 5?",
+        route="mixed",
+        sql=sql,
+        chunks=[BAND_CHUNK],
+    )
+    assert kinds(cites_sql_only) == ["missing_band_citation"]
+    assert "[D1]" in cites_sql_only["failures"][0]["detail"]
+    cites_band = verify(
+        "The uplink count is 41 [S1]; band 5 uplink is 824 MHz to 849 MHz [D1].",
+        question="How many in the uplink of band 5?",
+        route="mixed",
+        sql=sql,
+        chunks=[BAND_CHUNK],
+    )
+    assert cites_band["ok"], cites_band["failures"]
+
+
+def test_only_a_band_chunk_counts_and_only_when_band_rows_were_supplied() -> None:
+    other = {**CHUNK, "ref": "D2", "chunk_id": "36.101@19.6.0/6.2.2/1"}
+    sql = sql_result(rows=[[41]], columns=["n"])
+    cited_other = verify(
+        "The count is 41 [S1]. Another clause [D2].",
+        question="q",
+        route="mixed",
+        sql=sql,
+        chunks=[BAND_CHUNK, other],
+    )
+    assert kinds(cited_other) == ["missing_band_citation"]  # D2 holds no band row
+    no_bands = verify(
+        "The count is 41 [S1] and a clause [D1].",
+        question="q",
+        route="mixed",
+        sql=sql,
+        chunks=[CHUNK],
+    )
+    assert no_bands["ok"], no_bands["failures"]  # a search-based mixed answer needs no band cite

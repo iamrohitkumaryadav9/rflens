@@ -38,13 +38,15 @@ AUTHORS = ("human", "assistant")
 
 
 def eval_settings(settings: LlmSettings, n_questions: int) -> LlmSettings:
-    """This command's settings: run cap = questions x 10, no fallback provider."""
-    return settings.model_copy(
-        update={
-            "llm_max_calls_per_run": n_questions * CALLS_PER_QUESTION,
-            "llm_fallback": "",
-        }
-    )
+    """This command's settings: run cap = questions x 10, no fallback provider, temperature 0
+    unless LLM_TEMPERATURE is set."""
+    update: dict = {
+        "llm_max_calls_per_run": n_questions * CALLS_PER_QUESTION,
+        "llm_fallback": "",
+    }
+    if "llm_temperature" not in settings.model_fields_set:
+        update["llm_temperature"] = 0.0
+    return settings.model_copy(update=update)
 
 
 def worst_case_usd(
@@ -239,6 +241,42 @@ def save(run_id: str, scores: list[Score]) -> Path:
     return path
 
 
+# --- comparison with an earlier run -----------------------------------------------------------
+
+
+def compare_with_baseline(base: list[dict], new: list[Score]) -> str:
+    """Per question: fixed (wrong -> correct), broke (correct -> wrong) or unchanged, and how each
+    author group moved. `base` are the saved rows of the earlier run (dicts with qid, correct,
+    author). Only questions present in both runs count."""
+    before = {r["qid"]: r for r in base}
+    fixed, broke, same_ok, same_wrong = [], [], [], []
+    for s in new:
+        if s.qid not in before:
+            continue
+        was = bool(before[s.qid]["correct"])
+        if s.correct and not was:
+            fixed.append(s.qid)
+        elif was and not s.correct:
+            broke.append(s.qid)
+        else:
+            (same_ok if s.correct else same_wrong).append(s.qid)
+    lines = [
+        f"fixed ({len(fixed)}): {', '.join(fixed) or '-'}",
+        f"broke ({len(broke)}): {', '.join(broke) or '-'}",
+        f"unchanged: {len(same_ok)} correct in both, {len(same_wrong)} wrong in both "
+        f"({', '.join(same_wrong) or '-'})",
+    ]
+    for author in AUTHORS:
+        group = [s for s in new if s.author == author and s.qid in before]
+        was = sum(bool(before[s.qid]["correct"]) for s in group)
+        now = sum(s.correct for s in group)
+        lines.append(f"{author}: {was}/{len(group)} -> {now}/{len(group)} ({now - was:+d})")
+    total_was = sum(bool(before[s.qid]["correct"]) for s in new if s.qid in before)
+    total_now = sum(s.correct for s in new if s.qid in before)
+    lines.append(f"total: {total_was} -> {total_now} ({total_now - total_was:+d})")
+    return "\n".join(lines)
+
+
 # --- rescoring --------------------------------------------------------------------------------
 
 
@@ -289,6 +327,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--stop-usd", type=float, default=DEFAULT_STOP_USD)
     parser.add_argument("--note", default="", help="one line for the last column of RESULTS.md")
     parser.add_argument("--rescore", metavar="RUN_ID", help="score a saved run's threads again")
+    parser.add_argument("--baseline", metavar="RUN_ID", help="compare with this earlier run")
     args = parser.parse_args(argv)
 
     if args.rescore:
@@ -366,6 +405,13 @@ def main(argv: list[str] | None = None) -> int:
             questions, run=run, graph=graph, run_id=run.run_id, stop_usd=args.stop_usd
         )
     print("\n" + render_report(scores, by_id))
+    if args.baseline:
+        base_file = (
+            Path(__file__).resolve().parents[3] / "data" / "eval" / f"eval_e2e_{args.baseline}.json"
+        )
+        base_rows = json.loads(base_file.read_text(encoding="utf-8"))
+        print(f"\n--- against the baseline run {args.baseline} ---")
+        print(compare_with_baseline(base_rows, scores))
     saved = save(run.run_id, scores)
     print(f"\nfull results saved to {saved}")
     if stopped:

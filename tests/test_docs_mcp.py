@@ -187,6 +187,7 @@ def test_search_docs_result_fields_and_snippet(env: Env) -> None:
             "table_number",
             "caption",
             "table_part",
+            "via",
             "score",
             "snippet",
             "related_chunks",

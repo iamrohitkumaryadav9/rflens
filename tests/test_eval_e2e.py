@@ -620,3 +620,29 @@ def test_the_run_call_cap_still_stops_the_run(make_env, tag) -> None:
         for s in scores:
             env.saver.delete_thread(f"e2e-cap-{s.qid}")
         env.saver.delete_thread("e2e-cap-sql-1")
+
+
+# --- comparison with a baseline run ------------------------------------------------------
+
+
+def test_compare_with_baseline_lists_fixed_broke_unchanged_and_moves_per_group() -> None:
+    from rflens.eval.eval_e2e import compare_with_baseline
+
+    base = [
+        {"qid": "a", "correct": False, "author": "human"},
+        {"qid": "b", "correct": True, "author": "human"},
+        {"qid": "c", "correct": True, "author": "assistant"},
+        {"qid": "d", "correct": False, "author": "assistant"},
+        {"qid": "gone", "correct": True, "author": "human"},  # not in the new run: ignored
+    ]
+    new = [
+        score_question(gq("a"), state()),  # fixed
+        score_question(gq("b"), state(rows=((9,),), answer="9 [S1]")),  # broke
+        score_question(gq("c", author="assistant"), state()),  # unchanged, correct
+        score_question(gq("d", author="assistant"), state(rows=((9,),), answer="9 [S1]")),
+    ]
+    text = compare_with_baseline(base, new)
+    assert "fixed (1): a" in text and "broke (1): b" in text
+    assert "unchanged: 1 correct in both, 1 wrong in both (d)" in text
+    assert "human: 1/2 -> 1/2 (+0)" in text and "assistant: 1/2 -> 1/2 (+0)" in text
+    assert "total: 2 -> 2 (+0)" in text

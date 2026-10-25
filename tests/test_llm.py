@@ -806,3 +806,56 @@ def test_error_streaks_are_counted_per_question() -> None:
         with pytest.raises(LoopDetected) as err:  # q1's third in a row
             run.generate(msg("q1 last"), purpose="a", question_id="q1", max_output_tokens=5)
         assert err.value.kind == "repeat_error" and err.value.question_id == "q1"
+
+
+# --- temperature ---------------------------------------------------------------------------------
+
+
+def test_no_temperature_is_sent_unless_one_is_configured() -> None:
+    from rflens.llm.gemini import GeminiProvider
+
+    plain = GeminiProvider(LlmSettings(_env_file=None, gemini_api_key="k"))
+    body = plain.build_body([Message.user("hi")], None, 100)
+    assert set(body["generationConfig"]) == {"maxOutputTokens", "thinkingConfig"}  # no sampling
+    zero = GeminiProvider(LlmSettings(_env_file=None, gemini_api_key="k", llm_temperature=0.0))
+    assert (
+        zero.build_body([Message.user("hi")], None, 100)["generationConfig"]["temperature"] == 0.0
+    )
+    warm = GeminiProvider(LlmSettings(_env_file=None, gemini_api_key="k", llm_temperature=0.7))
+    assert (
+        warm.build_body([Message.user("hi")], None, 100)["generationConfig"]["temperature"] == 0.7
+    )
+
+
+def test_the_eval_commands_default_to_temperature_zero_unless_it_is_set(monkeypatch) -> None:
+    from rflens.eval.eval_e2e import eval_settings as e2e_settings
+    from rflens.eval.eval_sql import eval_settings as sql_settings
+
+    unset = LlmSettings(_env_file=None)
+    assert unset.llm_temperature is None  # ordinary commands: the provider default
+    assert e2e_settings(unset, 51).llm_temperature == 0.0
+    assert sql_settings(unset, 19).llm_temperature == 0.0
+    monkeypatch.setenv("LLM_TEMPERATURE", "0.3")
+    explicit = LlmSettings(_env_file=None)
+    assert e2e_settings(explicit, 51).llm_temperature == 0.3
+    assert sql_settings(explicit, 19).llm_temperature == 0.3
+
+
+def test_ollama_gets_the_temperature_too() -> None:
+    import json as _json
+
+    import httpx
+
+    from rflens.llm.ollama import OllamaProvider
+
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = _json.loads(request.content)
+        return httpx.Response(200, json={"message": {"content": "ok"}, "model": "m"})
+
+    provider = OllamaProvider(
+        LlmSettings(_env_file=None, llm_temperature=0.0), transport=httpx.MockTransport(handler)
+    )
+    provider.generate([Message.user("hi")], None, 10)
+    assert seen["body"]["options"] == {"num_predict": 10, "temperature": 0.0}

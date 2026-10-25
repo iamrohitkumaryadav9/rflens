@@ -13,8 +13,10 @@ migrate:
 test-db:
 	uv run python -m rflens.testdb
 
+# python -m pytest, not the pytest.exe launcher: this machine's Application Control policy blocked
+# the unsigned launcher on 2026-10-25 (python.exe itself is allowed).
 test: test-db
-	uv run pytest
+	uv run python -m pytest
 
 lint:
 	uv run ruff check .

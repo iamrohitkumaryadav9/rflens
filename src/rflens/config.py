@@ -54,6 +54,12 @@ class RetrievalSettings(BaseSettings):
     # diagnosis (the keyword leg is length-biased and adds noise to hybrid); revisit with the
     # week 3 golden set.
     retrieval_mode: Literal["vector", "keyword", "hybrid"] = "vector"
+    # Clause lookup: a question that names "clause 6.6.2.1" or "Table 7.3.1-1" gets those chunks
+    # first. Variant down-rank: letter-suffix clauses (5.5H, 6.2.4A) go behind the others unless
+    # the question mentions their topic. Both in retrieval/variants.py; env CLAUSE_LOOKUP,
+    # VARIANT_DOWNRANK.
+    clause_lookup: bool = True
+    variant_downrank: bool = True
 
 
 class DocsReaderSettings(BaseSettings):
@@ -142,6 +148,9 @@ class LlmSettings(BaseSettings):
     # A thinking level (minimal, low, medium, high) or an integer token budget. Thinking tokens
     # are billed as output and counted in max output tokens.
     llm_thinking_budget: str = "minimal"
+    # Sampling temperature sent to the provider. None: not sent, the provider's default applies
+    # (that is what every call did until now). The eval-* commands set 0 unless this is set.
+    llm_temperature: float | None = None
     llm_budget_usd: float = 2.50
     llm_usd_to_inr: float = 85.7
     llm_max_calls_per_run: int = 30
@@ -218,9 +227,9 @@ class GraphSettings(BaseSettings):
     approval_cost_usd: float = 0.05
     orch_retrieval_mode: Literal["vector", "keyword", "hybrid"] = "vector"
     orch_doc_k: int = 5
-    orch_doc_full_chunks: int = 3  # chunks fetched in full for the writer
+    orch_doc_full_chunks: int = 5  # chunks fetched in full for the writer (3 before the e2e round)
     orch_chunk_chars: int = 3600  # per chunk given to the writer
-    orch_evidence_chars: int = 9000  # all chunk text given to the writer
+    orch_evidence_chars: int = 18000  # all chunk text given to the writer (5 x 3600)
     orch_max_state_rows: int = 50  # SQL rows kept in the checkpointed state
     orch_writer_rows: int = 25  # SQL rows shown to the writer
     orch_planner_max_tokens: int = 300

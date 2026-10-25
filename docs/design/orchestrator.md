@@ -372,6 +372,56 @@ usage statistics (`.streamlit/config.toml`).
   `loop_detected` in its `draft_history` / verification) and an end-to-end run continues with the
   next question. The run call cap, the budget and the paid-call block still stop the whole run.
 
+## Improvement round after the first full baseline (2026-10-26)
+
+**Temperature.** Until now the gateway sent no `temperature`, `topP` or `topK` to Gemini: its
+`generationConfig` held only `maxOutputTokens`, `thinkingConfig` (level `minimal`) and the JSON
+schema fields, so the API defaults applied and two runs of the same question could differ.
+`LLM_TEMPERATURE` (unset: not sent) now sets it for Gemini and Ollama; the `eval-*` commands use
+0 unless `LLM_TEMPERATURE` is set. `eval-sql` also has `--only`, `--repeat` and `--stop-usd`, and
+prints how many answers differ between repeated runs.
+
+**Clause lookup** (`CLAUSE_LOOKUP`, default on). A question that says "clause 6.6.2.1" or "Table
+7.3.1-1" gets those chunks (the first 3 of each, in document order) in front of the search results,
+in the one spec when it is known and in both otherwise; results carry `via: lookup`. Only a number
+after clause / subclause / section or Table counts. docs-mcp does it inside `search_docs`; the doc
+agent keeps a named clause in its query when the planner's rewrite dropped it and passes the
+question as `context`.
+
+**Variant-clause rule** (`VARIANT_DOWNRANK`, default on). Clause numbers with a letter in them (5.5H,
+6.2.4A.7, 7.5.1H, 6.3.2F, 6.2.3E) belong to variants of a requirement and repeat the wording of the
+base clause, so in a vector search they displace it: 75% of the TS 38.101-1 chunks and 26% of the
+TS 36.101 chunks belong to a variant clause. In the top 50 candidates they are moved behind the
+other clauses unless the question mentions the topic of every letter in the number. What each letter
+stands for, read off the clause titles of the loaded specs (annex clauses such as A.3.9.2 are not
+variants):
+
+| letter | TS 36.101 (LTE) | TS 38.101-1 (NR FR1) |
+|---|---|---|
+| A | carrier aggregation (CA_NS_xx) | carrier aggregation |
+| B | UL-MIMO; spatial-multiplexing performance | NR-DC (dual connectivity) |
+| C | spatial multiplexing (2 Tx / 4Rx) | SUL (supplementary uplink) |
+| D | ProSe (sidelink) | UL MIMO |
+| E | category M1 / M2 (and category 0, 1bis) | V2X and sidelink |
+| F | NB-IoT (category NB1 / NB2) | "additional" requirements (NS_xx regions) |
+| G | V2X | Tx diversity |
+| H | LTE based 5G terrestrial broadcast | inter-band UL CA with UL MIMO |
+| I, J | spatial-multiplexing performance | (e)RedCap (I); ATG, air-to-ground (J) |
+| K | aerial UE | aerial UE (UAV) |
+| L, M | - | UL CA with Tx diversity (L); LP-WUS / WUR (M) |
+
+The keyword lists are in `retrieval/variants.py` (`TOPICS`). F in NR is the least certain reading.
+
+**Writer depth.** The writer gets the top 5 chunks (`ORCH_DOC_FULL_CHUNKS` 5, was 3;
+`ORCH_EVIDENCE_CHARS` 18000, was 9000).
+
+**NULL keys** (migration 0014 and SQL prompt rule 11). The comments of `fcc_grantees.country`,
+`fcc_test_firms.country` and `v_uls_licences.licensee_frn` say that rankings and counts of
+entities leave out NULL keys unless the question asks about missing values.
+
+**`missing_band_citation`** (verifier, a prose failure sent to the writer): when the doc agent
+supplied band rows, the answer must cite at least one of the chunks that hold them.
+
 ## Build differences (flagged)
 
 - Approval triggers: the step 2 build had only (b), (d) and (e), with the threshold named

@@ -21,6 +21,8 @@ Evidence is the SQL result (`[S1]`) and the retrieved spec chunks (`[D1]`, `[D2]
   (missing_assumption_wording).
 - quotations: quoted text must occur in a cited chunk, a SQL cell or the question
   (unsupported_quote).
+- band rows: when the doc agent supplied band rows, at least one of their chunks must be cited
+  (missing_band_citation).
 - companies: a SQL that groups by licensee_name together with licensee_frn, or by licensee_name
   alone while v_uls_licences exposes licensee_frn, splits one company across its name spellings
   (frn_name_grouping; the schema comments say to group by licensee_frn alone).
@@ -233,6 +235,18 @@ def verify(
         failures.append(_fail("dangling_citation", None, f"[{kind}{n}] does not exist"))
     if (sql_ok or chunks) and not (cited & valid):
         failures.append(_fail("missing_citation", None, "the answer cites no source"))
+
+    # --- the band rows the doc agent supplied must be cited --------------------------------------
+    band_chunks = [i for i, c in enumerate(chunks, start=1) if c.get("band_lines")]
+    if band_chunks and not any(("D", i) in cited for i in band_chunks):
+        tags = ", ".join(f"[D{i}]" for i in band_chunks)
+        failures.append(
+            _fail(
+                "missing_band_citation",
+                None,
+                f"the band edges come from {tags}; the answer must cite at least one of them",
+            )
+        )
 
     # --- units that the evidence carries --------------------------------------------------------
     question_units = units_in(question)

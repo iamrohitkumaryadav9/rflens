@@ -87,6 +87,10 @@ class SearchResult(BaseModel):
     caption: str | None
     table_part: str | None = Field(description="'2/3' for a piece of a split table, else null")
     score: float = Field(description="similarity (vector), ts_rank_cd (keyword) or RRF (hybrid)")
+    via: Literal["search", "lookup"] = Field(
+        default="search",
+        description="'lookup': fetched because the query names its clause or table",
+    )
     snippet: str = Field(description=f"start of the chunk text, at most {SNIPPET_CHARS} chars")
     related_chunks: list[str] = Field(description="chunk ids to read together with this one")
 
@@ -174,6 +178,16 @@ def create_docs_server(
                 )
             ),
         ] = None,
+        context: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "The user's original question, when the query is a rewrite of it: topic words "
+                    f"(carrier aggregation, NB-IoT, ...) are looked for here. At most "
+                    f"{MAX_QUERY_CHARS} characters."
+                )
+            ),
+        ] = None,
     ) -> SearchResponse:
         if len(query) > MAX_QUERY_CHARS:
             raise ToolError(
@@ -192,7 +206,15 @@ def create_docs_server(
         chosen = mode or default_mode or get_retrieval_settings().retrieval_mode
         try:
             with connect() as conn:
-                hits = search(conn, embedder, query, mode=chosen, top_k=k, spec=spec)
+                hits = search(
+                    conn,
+                    embedder,
+                    query,
+                    mode=chosen,
+                    top_k=k,
+                    spec=spec,
+                    context=context[:MAX_QUERY_CHARS] if context else None,
+                )
         except EmbedError as e:
             raise ToolError(
                 "the query embedding service is unavailable "
@@ -216,6 +238,7 @@ def create_docs_server(
                     caption=h.caption,
                     table_part=h.table_part,
                     score=round(h.score, 6),
+                    via=h.via,
                     snippet=make_snippet(h.text),
                     related_chunks=h.related_chunks,
                 )

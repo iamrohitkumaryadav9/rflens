@@ -374,6 +374,12 @@ data/                     # gitignored; raw downloads (data/raw/secom, data/raw/
     writer call's raw output. Loop detectors count per question when the call names one: a loop
     fails that question (`loop_detected`), the run goes on; run caps and the budget still stop it.
     End-to-end scorer v2 checks the order of rows only (tied rows are a group); see eval/RESULTS.md.
+  - **Improvement round (details in docs/design/orchestrator.md):** `LLM_TEMPERATURE` (unset: not
+    sent; the gateway sent no temperature, topP or topK before; `eval-*` commands use 0);
+    retrieval: `CLAUSE_LOOKUP` and `VARIANT_DOWNRANK` (both on; `retrieval/variants.py`), writer
+    depth 5; the SQL prompt and three column comments say NULL keys are not entities (migration
+    0014); verifier `missing_band_citation`. `make test` runs `python -m pytest`: this machine's
+    Application Control policy blocked the unsigned `pytest.exe` launcher on 2026-10-25.
   - Live smoke (`scripts/graph_smoke.py`, approval auto): sql-01 and doc-02 answered and verified.
     After the fixes mixed-01 (top 5 licensees, band 5 uplink) and mixed-02 (116,525) were
     `answered`, verified and equal to the golden reference under the relaxed compare, each SQL

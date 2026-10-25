@@ -430,6 +430,7 @@ def test_a_cheap_plan_needs_no_approval(make_env, tag) -> None:
         [plan("sql"), GOOD_SQL, write("The answer is 42 [S1].")],
         approval_mode="interrupt",
         paid=True,
+        approval_cost_usd=1.0,  # the fake price list ($1 per 1M tokens) makes 18000 chars dear
     )
     out = env.ask(f"What is forty one plus one? {tag}")
     assert out.status == "answered" and out.state["approval"]["needed"] is False
@@ -1142,3 +1143,65 @@ def test_a_loop_within_one_question_fails_that_question_with_loop_detected(
     (entry,) = out.state["draft_history"]
     assert [f["type"] for f in entry["failures"]] == ["loop_detected"]
     assert out.state["verification"]["failures"][0]["type"] == "loop_detected"
+
+
+# --- doc agent: named clauses, topic context, depth; missing_band_citation retry ---------------
+
+
+def test_the_doc_agent_keeps_a_named_clause_in_the_query_and_passes_the_question_as_context(
+    make_env, tag
+) -> None:
+    env = make_env(
+        [
+            plan(
+                "doc", "36.101", doc_query="operating bands of the UE"
+            ),  # the rewrite lost the clause
+            write("Band 5 uplink spans 824 MHz to 849 MHz [D1]."),
+        ]
+    )
+    seen: list[tuple] = []
+    real = env.docs_tools.search
+    env.docs_tools.search = lambda *a: (seen.append(a), real(*a))[1]
+    question = f"What does clause 5.5 say about the LTE operating bands? {tag}"
+    out = env.ask(question)
+    query, spec, _mode, _k, context = seen[0]
+    assert query == "operating bands of the UE clause 5.5" and spec == "36.101"
+    assert context == question  # topic words for the variant rule come from the question
+    assert out.status == "answered" and out.state["doc_hits"][0]["clause"] == "5.5"
+
+
+def test_a_clause_the_rewrite_kept_is_not_added_twice(make_env, tag) -> None:
+    from rflens.graph.nodes import _query_with_refs
+
+    assert _query_with_refs(
+        "clause 6.6.2.1 emission mask", "What does clause 6.6.2.1 require?"
+    ) == ("clause 6.6.2.1 emission mask")
+    assert _query_with_refs("limits", "See Table 7.3.1-1 and clause 5.5") == (
+        "limits clause 5.5 Table 7.3.1-1"
+    )
+    assert _query_with_refs("limits", "no reference here") == "limits"
+
+
+def test_the_writer_gets_five_chunks_by_default() -> None:
+    from rflens.config import GraphSettings
+
+    s = GraphSettings(_env_file=None)
+    assert (s.orch_doc_full_chunks, s.orch_evidence_chars) == (5, 18000)
+    assert s.orch_doc_full_chunks * s.orch_chunk_chars <= s.orch_evidence_chars
+
+
+def test_an_answer_that_ignores_the_band_chunk_is_sent_back_to_the_writer(
+    make_env, tag, band_rows
+) -> None:
+    sql = sql_with_band_join("ul_low_mhz", "ul_high_mhz")  # no typed edges: only the citation fails
+    no_d = write(
+        "The database count is 0 [S1], with the units of the ULS frequencies assumed to be MHz."
+    )
+    env = make_env([plan("mixed", "36.101", bands=LOOKUP), sql, no_d, write(JOIN_DRAFT)])
+    out = env.ask(MIXED_Q.format(tag=tag))
+    assert out.status == "answered", out.state["verification"]
+    first, second = out.state["draft_history"]
+    assert [f["type"] for f in first["failures"]] == ["missing_band_citation"]
+    assert second["ok"] and "[D1]" in second["draft"]
+    assert "missing_band_citation" in env.provider.calls[3][0][-1].content  # fed back to the writer
+    assert out.stats["sql_agent"]["calls"] == 1  # a prose failure: the SQL is not asked again

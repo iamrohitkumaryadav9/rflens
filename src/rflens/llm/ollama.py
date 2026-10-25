@@ -23,6 +23,7 @@ class OllamaProvider:
     ):
         self.model = model or settings.llm_ollama_model
         self._base = settings.ollama_base_url.rstrip("/")
+        self._temperature = settings.llm_temperature
         self._client = httpx.Client(timeout=settings.llm_ollama_timeout_s, transport=transport)
 
     def check_allowed(self) -> None:
@@ -38,6 +39,8 @@ class OllamaProvider:
             "think": False,
             "options": {"num_predict": max_output_tokens},
         }
+        if self._temperature is not None:
+            body["options"]["temperature"] = self._temperature
         if json_schema is not None:
             body["format"] = json_schema
         try:

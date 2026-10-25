@@ -45,7 +45,9 @@ empty string).
 For "doc" and "mixed", "doc_query" is the search text for the specification: name the specification
 concept to find (for example "E-UTRA operating band 5 uplink downlink frequency range" or "UE
 power class 3 maximum output power tolerance"), using spec vocabulary and none of the
-database-side words (licensees, counts, rankings, call signs, active). For "mixed", "sql_question"
+database-side words (licensees, counts, rankings, call signs, active). Keep clause numbers
+(clause 6.6.2.1), table numbers (Table 7.3.1-1) and identifiers (NS_07, n78) exactly as the
+question writes them. For "mixed", "sql_question"
 restates only the database part as a self-contained question, keeping every constraint of the
 original (status words such as "active", inclusion words such as "inside", counts, rankings), and
 says that the numeric limits
