@@ -79,7 +79,21 @@ def is_alive(pid: int) -> bool:
         os.kill(pid, 0)
     except OSError:
         return False
-    return True
+    return not _is_zombie(pid)  # a killed child stays a zombie until its parent waits for it
+
+
+def _is_zombie(pid: int) -> bool:
+    """True for a process that has exited but is not reaped yet (state Z). kill(pid, 0) succeeds
+    for it, so without this a stopped child of this very process would look alive."""
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as f:
+            return f.read().rsplit(")", 1)[1].split()[0] == "Z"
+    except (FileNotFoundError, IndexError):
+        pass
+    except OSError:
+        return False
+    out = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True)
+    return out.stdout.strip().startswith("Z")
 
 
 def port_in_use(port: int) -> bool:
@@ -97,16 +111,25 @@ def suggest_port(taken: int, reserved: set[int] | None = None) -> int:
     return port
 
 
-def kill_tree(pid: int) -> None:
+def kill_tree(pid: int, force: bool = False) -> None:
     """Stop the process we started and the children it spawned (the venv launcher on Windows has
-    one). Only this PID's tree: nothing is looked up by port, name or command line."""
+    one). Only this PID's tree: nothing is looked up by port, name or command line.
+
+    On POSIX `start()` makes the server the leader of its own process group, so the group is the
+    tree. A recorded PID that does not lead a group (it shares its parent's group) must not be
+    signalled through killpg: that would raise ESRCH for it, or hit the parent's group. It gets
+    the signal itself."""
     if sys.platform == "win32":
         subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
-    else:
-        try:
-            os.killpg(pid, signal.SIGTERM)  # started with start_new_session=True
-        except OSError:
-            pass
+        return
+    sig = signal.SIGKILL if force else signal.SIGTERM
+    try:
+        if os.getpgid(pid) == pid:
+            os.killpg(pid, sig)
+        else:
+            os.kill(pid, sig)
+    except ProcessLookupError:
+        pass  # already gone
 
 
 def start(
@@ -149,16 +172,26 @@ def start(
     return f"{name}: started pid {proc.pid} on port {port} (log run/{name}.log)"
 
 
+def _wait_gone(pid: int, seconds: float) -> bool:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if not is_alive(pid):
+            return True
+        time.sleep(0.1)
+    return not is_alive(pid)
+
+
 def stop(name: str, run_dir: Path = RUN_DIR) -> str:
     pid = read_pid(name, run_dir)
     if pid is None:
         return f"{name}: no pid file, nothing to stop"
     if is_alive(pid):
         kill_tree(pid)
-        for _ in range(20):
-            if not is_alive(pid):
-                break
-            time.sleep(0.25)
+        if not _wait_gone(pid, 5.0):
+            kill_tree(pid, force=True)  # it ignored the polite signal
+            _wait_gone(pid, 5.0)
+        if is_alive(pid):
+            return f"{name}: pid {pid} is still running after SIGKILL; pid file kept"
         message = f"{name}: stopped pid {pid}"
     else:
         message = f"{name}: pid {pid} was already gone"

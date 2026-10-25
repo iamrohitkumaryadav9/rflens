@@ -124,3 +124,45 @@ def test_the_message_for_a_taken_port_carries_that_suggestion(run_dir, monkeypat
     monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: pytest.fail("must not start"))
     line = devservers.start("docs-mcp", None, run_dir)
     assert "--port docs-mcp=8103" in line and "docs-mcp=8102" not in line
+
+
+STARTER = """
+import sys
+from pathlib import Path
+from rflens import devservers
+from rflens.devservers import SERVERS, Server
+SERVERS["demo"] = Server("demo", 59998, "DEMO_PORT", ("-c", "import time; time.sleep(120)"))
+print(devservers.start("demo", None, Path(sys.argv[1])))
+"""
+
+
+def test_a_server_started_by_another_process_is_stopped_by_its_recorded_pid(run_dir) -> None:
+    """The real use case: `servers-up` exits, and `servers-down` runs later in a new process."""
+    started = subprocess.run(
+        [sys.executable, "-c", STARTER, str(run_dir)], capture_output=True, text=True, timeout=60
+    )
+    assert started.returncode == 0, started.stderr
+    pid = devservers.read_pid("demo", run_dir)
+    try:
+        assert pid and f"started pid {pid}" in started.stdout
+        assert devservers.is_alive(pid), "the server must outlive the process that started it"
+        assert devservers.stop("demo", run_dir) == f"demo: stopped pid {pid}"
+        assert not devservers.is_alive(pid)
+        assert not devservers.pid_file("demo", run_dir).exists()
+    finally:
+        if pid and devservers.is_alive(pid):
+            devservers.kill_tree(pid, force=True)
+
+
+def test_a_zombie_is_not_alive_and_a_live_child_is() -> None:
+    child = sleeper()
+    try:
+        assert devservers.is_alive(child.pid)
+        child.kill()  # exited, but not waited for yet: a zombie on POSIX
+        for _ in range(50):
+            if not devservers.is_alive(child.pid):
+                break
+            time.sleep(0.1)
+        assert not devservers.is_alive(child.pid)
+    finally:
+        child.wait()
