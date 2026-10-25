@@ -12,6 +12,16 @@ Quickstart (needs Docker, uv, make):
 3GPP specs are copyrighted: run `make fetch-3gpp` then `make chunk-3gpp` to build the corpus locally; nothing from 3GPP is in this repo.
 Check: `curl localhost:8000/health` returns `{"status":"ok","pgvector":true}`.
 
+## Plan: week 5
+
+Report extraction (FCC test reports, vendor datasheets) is not pursued: FCC blocks automated
+access, many reports are plot-only, some PDFs disallow copying, and vendor datasheets need a login
+(`docs/design/report-extraction.md`; kept as a record: `docs/design/datasheets.md`). The
+document-to-SQL piece is the 3GPP operating-band extraction (`spec_operating_bands`, every row
+cites its source chunk). Next: analytics-mcp and a stats agent (design in progress).
+
+Future work: report or datasheet value extraction, if a legitimate machine-readable source appears.
+
 ## Dev servers
 
 `make servers-up` starts sql-mcp (8102), docs-mcp (8101), the API (8000) and the UI (8502), each as

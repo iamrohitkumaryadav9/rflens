@@ -415,9 +415,8 @@ Details are for the `cell` service, snapshot complete/l_cell.zip dated 2026-10-1
   primary key is (service, line_no).
 
 - (f) FCC equipment-authorization snapshots (`fcc_grantees`, `fcc_test_firms`) end 2021-03-22.
-  Devices registered later will not join to a grantee. When curating FCC IDs for report
-  extraction later, prefer IDs whose grantee code exists in `fcc_grantees`. A fresher source has
-  not been found.
+  Devices registered later will not join to a grantee. A fresher source has not been found.
+  (Report extraction is not pursued: docs/design/report-extraction.md.)
 - (g) `fcc_test_firms.designation_number` is not unique: US5037 (Fangguang Inspection & Testing,
   China; Unified Compliance Laboratory, United States) and US1273 (Shanghai Testing & Inspection
   Institute, China; TARANG, India) each belong to two firms. The key is
