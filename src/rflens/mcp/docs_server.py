@@ -188,6 +188,16 @@ def create_docs_server(
                 )
             ),
         ] = None,
+        also_query: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "A second query searched too, for example the user's own words when `query` "
+                    "is a rewrite of them; the two result lists are merged by reciprocal rank "
+                    f"fusion before the cut. At most {MAX_QUERY_CHARS} characters."
+                )
+            ),
+        ] = None,
     ) -> SearchResponse:
         if len(query) > MAX_QUERY_CHARS:
             raise ToolError(
@@ -214,6 +224,7 @@ def create_docs_server(
                     top_k=k,
                     spec=spec,
                     context=context[:MAX_QUERY_CHARS] if context else None,
+                    also_query=also_query[:MAX_QUERY_CHARS] if also_query else None,
                 )
         except EmbedError as e:
             raise ToolError(

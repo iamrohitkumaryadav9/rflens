@@ -46,6 +46,7 @@ started, "+dirty" if the working tree had uncommitted changes.
 | 2026-10-25 14:43 | eval-e2e-3dfbc19d | d392065+dirty | gemini-3.1-flash-lite / standard | 3/3 | 0/0 | 0/0 / 0/0 | 0/0 | 2/3 | 0/0 | 0/0 | 2/3 | 7 | $0.002689 | stats smoke: stats-01, stats-02, stats-04 through the full graph, hard stop 0.02 |
 | 2026-10-27 14:16 | eval-e2e-aecd54a7 | d392065+dirty | gemini-3.1-flash-lite / standard | 55/55 | 15/19 | 16/22 / 20/22 | 4/4 | 3/4 | 6/6 | 24/30 | 20/25 | 144 | $0.111920 | full run on 55 questions after stats route (analytics-mcp), wrong_n rule, stats-02 reworded; temperature 0, standard tier, hard stop 0.20 |
 | 2026-10-27 15:02 | eval-e2e-94d99ed1 | b9e9c97+dirty | gemini-3.1-flash-lite / standard | 55/55 | 17/19 | 17/22 / 18/22 | 3/4 | 3/4 | 6/6 | 27/30 | 19/25 | 141 | $0.109840 | full run on 55 questions after the fixes: writer stats rules only with an analysis, sql/stats routing rules + examples, stats-03 label; temperature 0, standard tier, stop 0.20 |
+| 2026-10-27 16:01 | eval-e2e-d7222d07 | acb7e18+dirty | gemini-3.1-flash-lite / standard | 55/55 | 17/19 | 18/22 / 18/22 | 3/4 | 4/4 | 6/6 | 28/30 | 20/25 | 135 | $0.100019 | final week 5 run: multi-query doc retrieval (doc_query + question merged by RRF), stats-02 label without group sizes; temperature 0, standard tier, stop 0.20 |
 
 ## Scorer changes, rescores and open agent errors
 

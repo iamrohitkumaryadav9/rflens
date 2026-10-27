@@ -842,7 +842,7 @@ questions:
     analysis: group_compare
     params:
       feature: 60
-  notes: 'Interpretation: ''differ'' = the two-sided Mann-Whitney U test of feature 60 between pass and fail (the default of the menu''s group_compare), ''how large'' = the rank-biserial effect size, with group sizes after dropping missing values (1456 pass, 104 fail) and the medians. Reference computed independently of the analytics code by analytics_runner/reference.py (scipy.stats.mannwhitneyu asymptotic called directly; the same script recomputes the p-value from the textbook formula). Cross-check in a scratch venv: AUC(pass > fail) 0.308 over 1560 values, i.e. rank-biserial 0.384, equal to the reference. The answer must give both group sizes, the two medians, the p-value and the effect size, and must not claim a cause.'
+  notes: 'Interpretation: ''differ'' = the two-sided Mann-Whitney U test of feature 60 between pass and fail (the default of the menu''s group_compare), ''how large'' = the rank-biserial effect size, with group sizes after dropping missing values (1456 pass, 104 fail) and the medians. Reference computed independently of the analytics code by analytics_runner/reference.py (scipy.stats.mannwhitneyu asymptotic called directly; the same script recomputes the p-value from the textbook formula). Cross-check in a scratch venv: AUC(pass > fail) 0.308 over 1560 values, i.e. rank-biserial 0.384, equal to the reference. The answer must give the two medians and the effect size and must not claim a cause. The group sizes (1456 and 104) are checked in the analysis result, not required in the answer text: the question asks for the medians and the effect size, not for the sample sizes (changed 2026-10-27 after the full run eval-e2e-94d99ed1, where a correct, verified answer with the combined n 1560 was scored a miss).'
   reference_stats:
     via: 'analytics_runner/reference.py, run in the sandbox image: scipy.stats called directly and every Mann-Whitney p-value recomputed from the textbook formula (shares no code with analytics_runner/analyses.py)'
     scipy: 1.18.1
@@ -871,9 +871,7 @@ questions:
     - path: higher_in
       value: fail
     answer_rows:
-    - - 1456
-      - 104
-      - 0.7222500000000001
+    - - 0.7222500000000001
       - 5.5222999999999995
     ordered: false
 - id: stats-03

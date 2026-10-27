@@ -363,6 +363,7 @@ def make_doc_agent(deps: GraphDeps):
                     s.orch_retrieval_mode,
                     s.orch_doc_k,
                     state["question"],  # topic words for the variant-clause rule
+                    also_query=state["question"] if s.orch_multi_query else None,
                 )
                 doc_hits = [_hit_summary(h, i) for i, h in enumerate(hits, start=1)]
                 used = 0

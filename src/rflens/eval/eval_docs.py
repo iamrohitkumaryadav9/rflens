@@ -9,6 +9,12 @@ is a top-5 chunk of the question's spec whose clause equals an expected clause e
 sub-clause does not count) or whose table number is an expected table. Recall is reported
 separately for the human-written and the assistant-written questions, and one row per group is
 appended to eval/RESULTS.md. Agents reach documents only through docs-mcp, and so does this.
+
+`--queries-from RUN_ID` (repeatable) compares the three ways the doc agent can search, with the
+planner's real `doc_query` of each question taken from a saved end-to-end run (still free): the
+doc_query alone, the user's question alone, and both merged by reciprocal rank fusion before the
+variant rule and the cut (`also_query`), each with the spec the agent had for that question and
+with no spec filter. Vector mode, as the orchestrator uses.
 """
 
 import argparse
@@ -45,10 +51,22 @@ class DocsSearchClient:
         self.target = target
         self.calls = 0
 
-    def search(self, query: str, spec: str | None, mode: str, k: int = K) -> list[dict]:
+    def search(
+        self,
+        query: str,
+        spec: str | None,
+        mode: str,
+        k: int = K,
+        context: str | None = None,
+        also_query: str | None = None,
+    ) -> list[dict]:
         arguments: dict[str, Any] = {"query": query, "mode": mode, "k": k}
         if spec:
             arguments["spec"] = spec
+        if context:
+            arguments["context"] = context
+        if also_query:
+            arguments["also_query"] = also_query
 
         async def run():
             async with Client(self.target) as client:
@@ -139,15 +157,155 @@ def misses(ev: DocsEval, config: Config) -> list[Question]:
     return [q for q in ev.questions if ev.ranks[q.id][config] is None]
 
 
+# --- doc_query versus question versus both ----------------------------------------------------
+
+WAYS = ("doc_query", "question", "both")
+SPEC_SETTINGS = ("agent spec", "no filter")
+
+
+@dataclass
+class QueryInput:
+    """What the doc agent had for one question in a saved run."""
+
+    doc_query: str  # the planner's doc_query with the clause / table references put back
+    spec: str | None  # the spec the agent searched with (rule or hint), None when unknown
+
+
+def saved_query_inputs(run_id: str, questions: list[Question]) -> dict[str, QueryInput]:
+    """The planner's doc_query and the spec of each doc question in a saved end-to-end run."""
+    from rflens.eval.eval_e2e import thread_state
+    from rflens.graph.app import open_checkpointer
+    from rflens.graph.nodes import _query_with_refs
+
+    found: dict[str, QueryInput] = {}
+    with open_checkpointer() as saver:
+        for q in questions:
+            state = thread_state(saver, f"{run_id}-{q.id}")
+            if not state or not (state.get("plan") or {}).get("doc_query"):
+                continue  # not routed to documents in that run
+            found[q.id] = QueryInput(
+                _query_with_refs(state["plan"]["doc_query"], q.question), state.get("spec")
+            )
+    return found
+
+
+def search_way(
+    client: DocsSearchClient, q: Question, given: QueryInput, way: str, spec: str | None, k: int
+) -> list[dict]:
+    if way == "doc_query":
+        return client.search(given.doc_query, spec, "vector", k, context=q.question)
+    if way == "question":
+        return client.search(q.question, spec, "vector", k)
+    return client.search(
+        given.doc_query, spec, "vector", k, context=q.question, also_query=q.question
+    )
+
+
+def run_ways_eval(
+    client: DocsSearchClient, questions: list[Question], inputs: dict[str, QueryInput], k: int = K
+) -> dict[str, dict[tuple[str, str], int | None]]:
+    """question id -> (way, spec setting) -> rank of the first hit."""
+    ranks: dict[str, dict[tuple[str, str], int | None]] = {}
+    for q in questions:
+        given = inputs.get(q.id)
+        if given is None:
+            continue
+        ranks[q.id] = {}
+        for way in WAYS:
+            for setting in SPEC_SETTINGS:
+                spec = given.spec if setting == "agent spec" else None
+                results = search_way(client, q, given, way, spec, k)
+                ranks[q.id][(way, setting)] = rank_of_hit(q, results)
+    return ranks
+
+
+def ways_table(questions: list[Question], ranks: dict[str, dict[tuple[str, str], int | None]]):
+    """{(way, setting): {author: (hits, n)}} over the questions that have saved inputs."""
+    out: dict[tuple[str, str], dict[str, tuple[int, int]]] = {}
+    for way in WAYS:
+        for setting in SPEC_SETTINGS:
+            cells = {}
+            for author in ("human", "assistant"):
+                group = [q for q in questions if q.author == author and q.id in ranks]
+                hits = sum(ranks[q.id][(way, setting)] is not None for q in group)
+                cells[author] = (hits, len(group))
+            out[(way, setting)] = cells
+    return out
+
+
+def merged_verdict(table: dict[tuple[str, str], dict[str, tuple[int, int]]], setting: str) -> bool:
+    """The merged search is kept only if, for BOTH author groups, it finds at least as many as the
+    better of the two single queries."""
+    return all(
+        table[("both", setting)][a][0]
+        >= max(table[("doc_query", setting)][a][0], table[("question", setting)][a][0])
+        for a in ("human", "assistant")
+    )
+
+
+def render_ways(
+    run_id: str, questions: list[Question], ranks: dict[str, dict[tuple[str, str], int | None]]
+) -> str:
+    table = ways_table(questions, ranks)
+    lines = [
+        f"planner doc_queries and specs from {run_id} ({len(ranks)} doc questions), vector mode"
+    ]
+    n = {a: sum(q.author == a and q.id in ranks for q in questions) for a in ("human", "assistant")}
+    human, assistant = f"human ({n['human']})", f"assistant ({n['assistant']})"
+    lines.append(f"{'way':10} {'spec':11} {human:>12} {assistant:>16}")
+    for way in WAYS:
+        for setting in SPEC_SETTINGS:
+            c = table[(way, setting)]
+            lines.append(
+                f"{way:10} {setting:11} {c['human'][0]:>8}/{c['human'][1]:<3} "
+                f"{c['assistant'][0]:>12}/{c['assistant'][1]:<3}"
+            )
+    for setting in SPEC_SETTINGS:
+        lines.append(
+            f"merged >= better single query for both groups ({setting}): "
+            + ("YES" if merged_verdict(table, setting) else "NO")
+        )
+    lines.append("")
+    lines.append(
+        f"{'id':7} {'author':9} "
+        + " ".join(f"{w[:3]}/{s[:3]:>3}" for w in WAYS for s in SPEC_SETTINGS)
+    )
+    for q in questions:
+        if q.id in ranks:
+            cells = " ".join(
+                f"{str(ranks[q.id][(w, s)] or '-'):>7}" for w in WAYS for s in SPEC_SETTINGS
+            )
+            lines.append(f"{q.id:7} {q.author:9} {cells}")
+    return "\n".join(lines)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Retrieval recall@5 on the golden doc questions")
     parser.add_argument("--file", type=Path, default=DEFAULT_FILE)
     parser.add_argument("--note", default="", help="one line for the last column of RESULTS.md")
     parser.add_argument("--no-record", action="store_true", help="do not append to RESULTS.md")
+    parser.add_argument(
+        "--queries-from",
+        action="append",
+        default=[],
+        metavar="RUN_ID",
+        help="compare doc_query / question / both with the planner's queries of a saved e2e run",
+    )
     args = parser.parse_args(argv)
 
     questions = load_questions(args.file)
     client = DocsSearchClient(get_agent_settings().docs_mcp_url)
+    if args.queries_from:
+        try:
+            for run_id in args.queries_from:
+                inputs = saved_query_inputs(run_id, questions)
+                ranks = run_ways_eval(client, questions, inputs)
+                print(render_ways(run_id, questions, ranks) + "\n")
+        except (DocsMcpUnavailable, DocsMcpError) as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            return 2
+        print(f"{client.calls} searches through docs-mcp (free)")
+        return 0
     try:
         ev = run_eval(client, questions)
     except (DocsMcpUnavailable, DocsMcpError) as e:

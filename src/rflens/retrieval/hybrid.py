@@ -172,12 +172,18 @@ def search(
     context: str | None = None,
     clause_lookup: bool | None = None,
     variant_downrank: bool | None = None,
+    also_query: str | None = None,
 ) -> list[Hit]:
     """Search the chunks. `mode` defaults to the configured RETRIEVAL_MODE (interim: vector).
 
     `clause_lookup` and `variant_downrank` default to the CLAUSE_LOOKUP / VARIANT_DOWNRANK
     settings. `context` is the text in which the variant rule looks for topic words (the question
     itself when the query is a rewrite of it); it defaults to the query.
+
+    `also_query` is a second query (the user's own words when `query` is the planner's rewrite):
+    both are searched in the same mode and their ranked lists are merged by reciprocal rank fusion
+    BEFORE the variant rule and the cut to `top_k`, so one unlucky wording cannot decide the
+    result. Clause and table lookups stay first. A second query equal to the first is ignored.
     """
     settings = get_retrieval_settings()
     mode = mode or settings.retrieval_mode
@@ -187,16 +193,29 @@ def search(
     rrf_k = rrf_k or settings.rrf_k
     lookup_on = settings.clause_lookup if clause_lookup is None else clause_lookup
     rerank_on = settings.variant_downrank if variant_downrank is None else variant_downrank
-    vec = vector_search(conn, embedder, query, k=candidates, spec=spec) if mode != "keyword" else []
-    kw = keyword_search(conn, query, k=candidates, spec=spec) if mode != "vector" else []
-    vec_rank = {cid: i for i, (cid, _) in enumerate(vec, start=1)}
-    kw_rank = {cid: i for i, (cid, _) in enumerate(kw, start=1)}
-    if mode == "vector":
-        ordered = dict(vec)
-    elif mode == "keyword":
-        ordered = dict(kw)
-    else:
-        ordered = rrf({"vector": [c for c, _ in vec], "keyword": [c for c, _ in kw]}, rrf_k)
+
+    def one_query(q: str) -> tuple[dict[str, float], dict[str, int], dict[str, int]]:
+        vec = vector_search(conn, embedder, q, k=candidates, spec=spec) if mode != "keyword" else []
+        kw = keyword_search(conn, q, k=candidates, spec=spec) if mode != "vector" else []
+        v_rank = {cid: i for i, (cid, _) in enumerate(vec, start=1)}
+        k_rank = {cid: i for i, (cid, _) in enumerate(kw, start=1)}
+        if mode == "vector":
+            scores = dict(vec)
+        elif mode == "keyword":
+            scores = dict(kw)
+        else:
+            scores = rrf({"vector": [c for c, _ in vec], "keyword": [c for c, _ in kw]}, rrf_k)
+        return scores, v_rank, k_rank
+
+    ordered, vec_rank, kw_rank = one_query(query)
+    second = (also_query or "").strip()
+    if second and second != query.strip():
+        other, _, _ = one_query(second)
+
+        def ranked(scores: dict[str, float]) -> list[str]:
+            return [c for c, _ in sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))]
+
+        ordered = rrf({"query": ranked(ordered), "also_query": ranked(other)}, rrf_k)
     pool = top_k * POOL_FACTOR if rerank_on else top_k
     top = sorted(ordered.items(), key=lambda kv: (-kv[1], kv[0]))[:pool]
     hits: list[Hit] = []
@@ -224,7 +243,8 @@ def search(
         later = [h for h in hits if is_downranked(h.spec, h.clause, topic_text)]
         hits = keep + later
     if lookup_on:
-        clauses, tables = extract_refs(query if context is None else f"{query}\n{context}")
+        named = query if context is None else f"{query}\n{context}"
+        clauses, tables = extract_refs(f"{named}\n{second}" if second else named)
         if clauses or tables:
             looked = lookup_refs(conn, clauses, tables, spec)
             names = {h.chunk_id for h in looked}

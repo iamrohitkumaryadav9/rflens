@@ -182,7 +182,8 @@ venv on a separate dump of the database.
    ranks 2 and 3 differ clearly (p 9.55e-9 against 1.07e-6, a factor of 112) while ranks 3 and 4
    (features 248 and 520, p 1.07e-6 and 1.19e-6) are near-tied; the refresh refuses a cutoff
    below a factor of 10 and an order inside the top N below a factor of 2.
-2. **stats-02 (pass/fail comparison):** "...how large is the difference (the median of each group and the effect size)?" Feature 60: 1,456 passing and 104 failing values, medians
+2. **stats-02 (pass/fail comparison):** "...how large is the difference (the median of each group and the effect size)?" The answer text
+   must give the two medians; the group sizes are checked in the result only. Feature 60: 1,456 passing and 104 failing values, medians
    0.722 and 5.52, p 5.7e-11, rank-biserial 0.384 (higher in failing runs).
 3. **stats-03 (distribution):** feature 104: n 1,565, 2 missing, quartiles -0.0118, -0.0101,
    -0.0082, and the 20 bin counts in the result.

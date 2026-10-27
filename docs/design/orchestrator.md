@@ -512,7 +512,32 @@ Design and sandbox: [analytics.md](analytics.md). In the graph:
   `stats`, a statistics word beats an aggregate word, and the plan records `route_rule` when it
   overrode the model.
 - **stats-03** no longer requires n in the answer text (the question does not ask for it); n is
-  still checked in the result.
+  still checked in the result. **stats-02** likewise no longer requires the group sizes (it asks
+  for medians and the effect size).
+
+### Multi-query retrieval (after eval-e2e-94d99ed1)
+
+The planner's `doc_query` wording decides retrieval, and prompt changes move it (doc-04 and doc-14
+missed when the routing fix reworded their queries). The doc agent now searches with the planner's
+`doc_query` AND the user's question (`search_docs(query=doc_query, also_query=question,
+context=question)`, spec filter when known): each query is searched in the same mode and the two
+ranked lists are merged by reciprocal rank fusion (k=60) before the variant-clause rule and the cut
+to the top 5. Clause and table lookups (named in either text) stay first. `ORCH_MULTI_QUERY` (default
+on) switches it off. Measured free with `make eval-docs` / `python -m rflens.eval.eval_docs
+--queries-from RUN_ID`, with the planner's real queries of three saved full runs, vector mode: the
+merged search found as many as the better single query in both author groups in every case, and
+never more (recall@5 hits, human 10 / assistant 12 doc questions; spec as the agent had it):
+
+| planner queries from | doc_query only | question only | both merged |
+|---|---|---|---|
+| eval-e2e-94d99ed1 (latest) | 9/10, 9/12 | 9/10, 8/12 | 9/10, 9/12 |
+| eval-e2e-aecd54a7 | 10/10, 10/12 | 9/10, 8/12 | 10/10, 10/12 |
+| eval-e2e-559aacfa (44/51) | 10/10, 9/12 | 9/10, 8/12 | 10/10, 9/12 |
+
+With no spec filter the picture is the same (merged equals the better single query). The merge
+protects against a poorer single query but cannot rescue a question where both miss: doc-04 and
+doc-14 miss with the planner's latest wording and with the question alone (and hit with the
+earlier wording, where the merged search hits too).
 
 ## Build differences (flagged)
 

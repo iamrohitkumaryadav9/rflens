@@ -171,6 +171,13 @@ def test_the_other_references_use_the_independent_values() -> None:
     cmp_ = {c["path"]: c["value"] for c in stats_reference("stats-02", {}, REFERENCE)["checks"]}
     assert cmp_["groups.pass.n"] == 1456 and cmp_["groups.fail.n"] == 104
     assert cmp_["higher_in"] == "fail" and cmp_["rank_biserial"] == 0.384
+    # the group sizes are checked in the result; the text must give the medians that are asked for
+    built02 = stats_reference("stats-02", {}, REFERENCE)
+    assert built02["answer_rows"] == [[0.72, 5.52]]
+    stats02 = GOLDEN["stats-02"]
+    assert stats02.reference_stats["answer_rows"] == [[0.7222500000000001, 5.5222999999999995]]
+    assert "not for the sample sizes" in stats02.notes
+    assert {"path": "groups.pass.n", "value": 1456} in stats02.reference_stats["checks"]
     dist = stats_reference("stats-03", {}, REFERENCE)
     # n (1565) is a check on the result, not a required value of the text: the question does not ask
     assert dist["answer_rows"] == [[2, -0.0118, -0.0101, -0.0082]]

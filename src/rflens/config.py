@@ -280,6 +280,9 @@ class GraphSettings(BaseSettings):
     approval_cost_usd: float = 0.05
     orch_retrieval_mode: Literal["vector", "keyword", "hybrid"] = "vector"
     orch_doc_k: int = 5
+    # The doc agent searches with the planner's doc_query AND the user's question and merges the two
+    # lists (retrieval/hybrid.py `also_query`); the planner's wording alone made recall fragile.
+    orch_multi_query: bool = True
     orch_doc_full_chunks: int = 5  # chunks fetched in full for the writer (3 before the e2e round)
     orch_chunk_chars: int = 3600  # per chunk given to the writer
     orch_evidence_chars: int = 18000  # all chunk text given to the writer (5 x 3600)

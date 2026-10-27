@@ -299,7 +299,9 @@ def stats_reference(qid: str, params: dict, ref: dict) -> dict:
         )
         return {
             "checks": checks,
-            "answer_rows": [[c["n_pass"], c["n_fail"], c["median_pass"], c["median_fail"]]],
+            # the group sizes are checked in the result, not required in the text: the question
+            # asks for the medians and the effect size, not for the sample sizes
+            "answer_rows": [[c["median_pass"], c["median_fail"]]],
             "ordered": False,
         }
     if qid == "stats-03":  # distribution, feature 104

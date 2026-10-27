@@ -40,9 +40,17 @@ class DocsMcpTools:
         return result.structured_content
 
     def search(
-        self, query: str, spec: str | None, mode: str, k: int, context: str | None = None
+        self,
+        query: str,
+        spec: str | None,
+        mode: str,
+        k: int,
+        context: str | None = None,
+        also_query: str | None = None,
     ) -> list[dict]:
         arguments: dict[str, Any] = {"query": query, "mode": mode, "k": k}
+        if also_query:
+            arguments["also_query"] = also_query
         if spec:
             arguments["spec"] = spec
         if context:

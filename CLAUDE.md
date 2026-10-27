@@ -289,6 +289,11 @@ data/                     # gitignored; raw downloads (data/raw/secom, data/raw/
     planner prompt has six examples (`PLANNER_EXAMPLES`). The statistics rules of the writer are
     appended only when there is an analysis (`writer_system`); combined brackets such as `[D1, D2]`
     are not citations, and the prompt says so. Details: docs/design/orchestrator.md.
+  - **Multi-query retrieval:** the doc agent passes `also_query` (the user's question) next to the
+    planner's `doc_query`; docs-mcp and `retrieval/hybrid.search` merge the two ranked lists by RRF
+    before the variant rule and the top-5 cut, lookups stay first (`ORCH_MULTI_QUERY`, default on).
+    `python -m rflens.eval.eval_docs --queries-from RUN_ID` compares doc_query, question and both
+    (free).
   - **Container tests** (`make test-analytics`: the analyses inside the image, then
     `tests_docker/`: isolation flags against a real container, the whole stack) need a Docker
     daemon. The GitHub workflow runs them; `make ci-local` cannot (no Docker inside its

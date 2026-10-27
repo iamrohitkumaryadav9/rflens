@@ -467,7 +467,7 @@ def test_the_doc_agent_searches_with_the_planners_doc_query(make_env, tag) -> No
     )
     seen: list[tuple] = []
     real = env.docs_tools.search
-    env.docs_tools.search = lambda *a: (seen.append(a), real(*a))[1]
+    env.docs_tools.search = lambda *a, **kw: (seen.append(a), real(*a, **kw))[1]
     question = f"Tell me the uplink range of LTE band 5 please {tag}"
     out = env.ask(question)
     assert out.status == "answered"
@@ -480,7 +480,7 @@ def test_a_missing_doc_query_falls_back_to_the_question(make_env, tag) -> None:
     env = make_env([plan("doc", "36.101"), write("Band 5 uplink spans 824 MHz to 849 MHz [D1].")])
     seen: list[tuple] = []
     real = env.docs_tools.search
-    env.docs_tools.search = lambda *a: (seen.append(a), real(*a))[1]
+    env.docs_tools.search = lambda *a, **kw: (seen.append(a), real(*a, **kw))[1]
     question = f"Uplink range of LTE band 5 {tag}"
     env.ask(question)
     assert seen[0][0] == question
@@ -663,7 +663,7 @@ def band_rows() -> Iterator[None]:
 def spy_search(env: Env) -> list[tuple]:
     seen: list[tuple] = []
     real = env.docs_tools.search
-    env.docs_tools.search = lambda *a: (seen.append(a), real(*a))[1]
+    env.docs_tools.search = lambda *a, **kw: (seen.append(a), real(*a, **kw))[1]
     return seen
 
 
@@ -1161,12 +1161,16 @@ def test_the_doc_agent_keeps_a_named_clause_in_the_query_and_passes_the_question
     )
     seen: list[tuple] = []
     real = env.docs_tools.search
-    env.docs_tools.search = lambda *a: (seen.append(a), real(*a))[1]
+    kws: list[dict] = []
+    env.docs_tools.search = lambda *a, **kw: (seen.append(a), kws.append(kw), real(*a, **kw))[2]
     question = f"What does clause 5.5 say about the LTE operating bands? {tag}"
     out = env.ask(question)
     query, spec, _mode, _k, context = seen[0]
     assert query == "operating bands of the UE clause 5.5" and spec == "36.101"
     assert context == question  # topic words for the variant rule come from the question
+    assert kws[0] == {
+        "also_query": question
+    }  # and the question is searched too, merged (multi-query)
     assert out.status == "answered" and out.state["doc_hits"][0]["clause"] == "5.5"
 
 
