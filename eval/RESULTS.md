@@ -114,3 +114,43 @@ the adjacent-channel clause 7.5.1 is not in the top 5), doc-19 (broke: the plann
 output power" where it wrote "minimum output power" before, and clause 6.3.2.1 left the top 5), doc-01
 (broke: the writer's list of NR bands was cut off at 1500 tokens twice and redacted to `partial`).
 
+## Week 5 close-out (2026-10-27): the score history on a growing golden set
+
+The golden set grew from 51 to 55 questions (the four stats questions) after the run
+eval-e2e-559aacfa. Totals over different sets are not comparable, so the last column counts only the
+51 questions that existed from the start. The numbers are computed from the saved result files
+(`data/eval/eval_e2e_<run>.json`, gitignored) by counting the correct answers among those 51 ids.
+One run per question at temperature 0.
+
+| run | questions | correct (all) | correct (the original 51) | calls | cost |
+|---|---|---|---|---|---|
+| eval-e2e-fc0ac320 | 51 | 37/51 | 37/51 | 132 | $0.088257 |
+| eval-e2e-559aacfa | 51 | 44/51 | 44/51 | 125 | $0.098628 |
+| eval-e2e-aecd54a7 | 55 | 44/55 | 41/51 | 144 | $0.111920 |
+| eval-e2e-94d99ed1 | 55 | 46/55 | 43/51 | 141 | $0.109840 |
+| eval-e2e-d7222d07 | 55 | 48/55 | 44/51 | 135 | $0.100019 |
+
+On the original 51 questions the latest run equals the 44/51 run (fixed doc-01 and doc-22; broke
+doc-04 and doc-14); the four runs after the baseline scored 44, 41, 43 and 44 on them, so a single
+run moved by up to 3 questions between runs on the same questions while prompts changed. The 4 extra
+points over the 44/51 run come from the stats questions (4/4).
+
+Latest run (eval-e2e-d7222d07): sql 17/19, doc 18/22, mixed 3/4, stats 4/4, refuse 6/6; human 28/30,
+assistant 20/25; 135 calls, $0.100019 for 55 questions. Its 7 misses:
+
+- sql-14: the planner refuses a provenance question that `data_sources` can answer (open agent error
+  above).
+- sql-19: the answer is right (0 grantees in 2022) but omits the 2021 cut-off that `must_mention`
+  requires.
+- mixed-04: the answer is right but does not say that the ERP unit is unknown (`must_mention`); it
+  says the frequency units are assumed.
+- doc-04, doc-12, doc-14, doc-19: the expected clause is not among the retrieved chunks (search
+  result recall 18/22 in the run row); the cause was not diagnosed further. doc-04 and doc-12 name
+  NS_04 / NS_37 identifiers.
+
+Reference labels changed after a run showed them over-specified (the answers were right): stats-03
+no longer requires n in the answer text (after eval-e2e-aecd54a7) and stats-02 no longer requires the
+group sizes (after eval-e2e-94d99ed1); the rows of those runs were scored against the earlier labels.
+Multi-query retrieval (the planner's doc_query and the question merged by reciprocal rank fusion) was
+kept because, with the planner queries of three saved runs, it found as many as the better single
+query in both author groups; it never found more (table in docs/design/orchestrator.md).
