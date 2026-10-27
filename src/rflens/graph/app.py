@@ -68,7 +68,7 @@ def _after_planner(state: GraphState) -> str:
 def _after_approval(state: GraphState) -> str:
     if state.get("status") == "cancelled":
         return "finalize"
-    return "sql_agent" if state["route"] == "sql" else "doc_agent"
+    return {"sql": "sql_agent", "stats": "stats_agent"}.get(state["route"], "doc_agent")
 
 
 def _after_doc(state: GraphState) -> str:
@@ -84,6 +84,13 @@ def _after_sql(state: GraphState) -> str:
     return "writer"
 
 
+def _after_stats(state: GraphState) -> str:
+    stats = state.get("stats") or {}
+    if state.get("halt") or stats.get("status") != "answered":
+        return "finalize"
+    return "writer"
+
+
 def _after_writer(state: GraphState) -> str:
     return "finalize" if state.get("halt") else "verifier"
 
@@ -94,6 +101,7 @@ def build_graph(deps: nodes.GraphDeps, checkpointer: Any):
     g.add_node("approval", nodes.make_approval(deps))
     g.add_node("doc_agent", nodes.make_doc_agent(deps))
     g.add_node("sql_agent", nodes.make_sql_agent(deps))
+    g.add_node("stats_agent", nodes.make_stats_agent(deps))
     g.add_node("writer", nodes.make_writer(deps))
     g.add_node("verifier", nodes.verifier)
     g.add_node("redact", nodes.redact)
@@ -113,9 +121,12 @@ def build_graph(deps: nodes.GraphDeps, checkpointer: Any):
 
     g.add_edge(START, "planner")
     g.add_conditional_edges("planner", _after_planner, ["approval", "finalize"])
-    g.add_conditional_edges("approval", _after_approval, ["doc_agent", "sql_agent", "finalize"])
+    g.add_conditional_edges(
+        "approval", _after_approval, ["doc_agent", "sql_agent", "stats_agent", "finalize"]
+    )
     g.add_conditional_edges("doc_agent", _after_doc, ["sql_agent", "writer", "finalize"])
     g.add_conditional_edges("sql_agent", _after_sql, ["writer", "finalize"])
+    g.add_conditional_edges("stats_agent", _after_stats, ["writer", "finalize"])
     g.add_conditional_edges("writer", _after_writer, ["verifier", "finalize"])
     g.add_conditional_edges(
         "verifier", after_verifier, ["writer", "sql_agent", "redact", "finalize"]

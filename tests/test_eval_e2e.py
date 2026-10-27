@@ -325,7 +325,13 @@ def sample_scores():
 
 def test_summary_counts_per_type_author_and_doc_recall() -> None:
     sm = summarize(sample_scores())
-    assert sm["type"] == {"sql": "1/2", "doc": "1/2", "mixed": "0/0", "refuse": "0/0"}
+    assert sm["type"] == {
+        "sql": "1/2",
+        "doc": "1/2",
+        "mixed": "0/0",
+        "stats": "0/0",
+        "refuse": "0/0",
+    }
     assert sm["author"] == {"human": "2/2", "assistant": "0/2"}
     assert (sm["doc_answer"], sm["doc_recall_search"], sm["doc_recall_evidence"]) == (
         "1/2",
@@ -372,7 +378,8 @@ def test_the_e2e_row_is_appended_to_a_results_file_that_has_no_such_table_yet(tm
     (parsed,) = parse_table(path, E2E_TITLE)
     assert len(parsed) == len(E2E_COLUMNS) and parsed[1] == "eval-e2e-1"
     assert parsed[4] == "4/51" and parsed[5] == "1/2" and parsed[6] == "1/2 / 2/2"
-    assert parsed[9] == "2/2" and parsed[10] == "0/2" and parsed[-1] == "a / b"
+    assert parsed[7] == "0/0" and parsed[8] == "0/0"  # mixed, stats
+    assert parsed[10] == "2/2" and parsed[11] == "0/2" and parsed[-1] == "a / b"  # human, assistant
     assert row.startswith("| ")
 
 

@@ -14,8 +14,11 @@ from rflens.ci_local import (
     WORKFLOW,
     load_job,
     main,
+    needs_docker,
+    not_run_notice,
     runner_env,
     snapshot,
+    split_steps,
     steps_script,
 )
 
@@ -26,14 +29,23 @@ STEPS = [
     "uv run python -m rflens.testdb",
     "uv run pytest",
 ]
+DOCKER_STEPS = [
+    "docker build -f analytics_runner/Dockerfile -t rflens-analytics:v1 .",
+    "docker run --rm --network none --memory 512m --cpus 1 --read-only --tmpfs /tmp --cap-drop ALL "
+    "--security-opt no-new-privileges -e PYTHONPATH=/app rflens-analytics:v1 "
+    "python -m pytest -q -p no:cacheprovider /app/tests",
+    "uv run pytest tests_docker -q -p no:cacheprovider",
+]
 
 
 def test_the_harness_reads_the_real_workflow() -> None:
     job = load_job()
-    assert job["steps"] == STEPS  # the run: steps in order, trailing YAML comments gone
+    assert job["steps"] == [*STEPS, *DOCKER_STEPS]  # run: steps in order, YAML comments gone
     assert job["image"].startswith("pgvector/pgvector:")
     assert job["service_env"]["POSTGRES_DB"] == "rflens"
     assert {"TEST_DATABASE_URL", "DOCS_READER_PASSWORD", "SQL_READER_PASSWORD"} <= set(job["env"])
+    assert {"ANALYTICS_READER_PASSWORD", "ANALYTICS_LOGGER_PASSWORD"} <= set(job["env"])
+    assert "LLM_ALLOW_PAID" not in job["env"]  # CI never makes paid calls
 
 
 def test_the_environment_is_the_workflow_env_plus_what_github_sets() -> None:
@@ -51,6 +63,22 @@ def test_the_steps_script_runs_in_order_and_stops_at_the_first_failure() -> None
     assert positions == sorted(positions)
     assert script.count("; exit $rc; fi") == len(STEPS)  # every step stops the job on failure
     assert "::all steps passed::" in script and "python -m pip install -q --user uv" in script
+
+
+def test_docker_steps_are_reported_as_not_run_never_dropped_silently() -> None:
+    to_run, skipped = split_steps([*STEPS, *DOCKER_STEPS])
+    assert to_run == STEPS and skipped == DOCKER_STEPS
+    assert not any(needs_docker(s) for s in STEPS) and all(needs_docker(s) for s in DOCKER_STEPS)
+    notice = "\n".join(not_run_notice(skipped))
+    assert "NOT RUN: 3 workflow step(s)" in notice
+    assert "each needs a Docker daemon and the ci-local container has none" in notice
+    assert "make test-analytics" in notice and all(s in notice for s in skipped)
+    assert not_run_notice([]) == []
+    script = steps_script(to_run, skipped)
+    assert "NOT RUN: 3 workflow step(s)" in script and "tests_docker" in script
+    assert script.index("NOT RUN") < script.index("::all steps passed::")
+    assert "\\ndocker build" not in script  # the docker steps are echoed, never executed
+    assert script.count("; exit $rc; fi") == len(STEPS)
 
 
 def git(repo: Path, *args: str) -> None:
@@ -103,6 +131,7 @@ def test_plan_mode_prints_the_steps_and_needs_no_docker(
     assert main(["--plan"]) == 0
     out = capsys.readouterr().out
     assert "uv run pytest" in out and "fresh" in out and "names only" in out
+    assert "NOT RUN: 3 workflow step(s)" in out and "tests_docker" in out
     assert "ci-only-" not in out  # env values are never printed, only their names
 
 

@@ -349,7 +349,7 @@ def test_golden_file_structure_and_contents(tools, qtext) -> None:
     golden = load_golden()
     assert problems(golden) == []
     by_type = {t: [q for q in golden if q.type == t] for t in ("sql", "refuse")}
-    assert (len(by_type["sql"]), len(by_type["refuse"]), len(golden)) == (19, 6, 51)
+    assert (len(by_type["sql"]), len(by_type["refuse"]), len(golden)) == (19, 6, 55)  # + 4 stats
     by_id = {q.id: q for q in golden}
     assert by_id["sql-10"].question == (
         "How many cellular licences and how many spectrum leases expired in 2020?"

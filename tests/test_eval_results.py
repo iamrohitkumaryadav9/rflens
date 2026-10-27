@@ -88,9 +88,9 @@ def test_the_header_of_the_checked_in_file_is_current() -> None:
 def test_the_golden_set_has_the_expected_shape() -> None:
     questions = load_golden()
     by = {(q.type, q.author) for q in questions}
-    assert {t for t, _ in by} == {"sql", "doc", "mixed", "refuse"}
+    assert {t for t, _ in by} == {"sql", "doc", "mixed", "stats", "refuse"}
     assert all(q.author in ("human", "assistant") for q in questions)
-    assert len(questions) >= 50
+    assert len(questions) >= 55
 
 
 # --- file creation and row placement ----------------------------------------------------------

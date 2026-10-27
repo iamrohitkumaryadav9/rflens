@@ -122,6 +122,59 @@ class SqlMcpSettings(BaseSettings):
         return self._url(self.sql_logger_user, self.sql_logger_password)
 
 
+class ArtifactSettings(BaseSettings):
+    """Where analysis artifacts (plots, result JSON) are stored; the API serves them from here.
+    Env: ANALYTICS_ARTIFACTS_DIR (empty: <repository root>/artifacts)."""
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    analytics_artifacts_dir: str = ""
+
+
+class AnalyticsSettings(BaseSettings):
+    """analytics-mcp: its two database roles, where it listens, and the sandbox limits.
+
+    Env: ANALYTICS_READER_PASSWORD and ANALYTICS_LOGGER_PASSWORD (required; also read by migration
+    0015 when it creates the roles), ANALYTICS_READER_USER, ANALYTICS_LOGGER_USER,
+    ANALYTICS_MCP_HOST, ANALYTICS_MCP_PORT, ANALYTICS_IMAGE (the sandbox image, built by
+    `make analytics-image`), ANALYTICS_TIMEOUT_S, ANALYTICS_MEMORY, ANALYTICS_CPUS,
+    ANALYTICS_PIDS, ANALYTICS_STATEMENT_TIMEOUT_MS, ANALYTICS_ARTIFACTS_DIR.
+    """
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    analytics_reader_password: str
+    analytics_logger_password: str
+    analytics_reader_user: str = "rflens_analytics_reader"
+    analytics_logger_user: str = "rflens_analytics_logger"
+    analytics_mcp_host: str = "127.0.0.1"
+    analytics_mcp_port: int = 8103
+    analytics_image: str = "rflens-analytics:v1"
+    analytics_timeout_s: float = 60
+    analytics_memory: str = "512m"
+    analytics_cpus: str = "1"
+    analytics_pids: int = 64
+    analytics_statement_timeout_ms: int = 15_000
+    analytics_artifacts_dir: str = ""  # empty: <repository root>/artifacts
+
+    @model_validator(mode="after")
+    def _check(self) -> "AnalyticsSettings":
+        if self.analytics_timeout_s <= 0 or self.analytics_statement_timeout_ms <= 0:
+            raise ValueError("need ANALYTICS_TIMEOUT_S > 0 and ANALYTICS_STATEMENT_TIMEOUT_MS > 0")
+        if self.analytics_pids < 8:
+            raise ValueError("need ANALYTICS_PIDS >= 8")
+        return self
+
+    def _url(self, user: str, password: str) -> URL:
+        return make_url(get_settings().database_url).set(username=user, password=password)
+
+    def reader_url(self) -> URL:
+        return self._url(self.analytics_reader_user, self.analytics_reader_password)
+
+    def logger_url(self) -> URL:
+        return self._url(self.analytics_logger_user, self.analytics_logger_password)
+
+
 class LlmSettings(BaseSettings):
     """LLM gateway settings (env names are the upper-case field names).
 
@@ -239,13 +292,14 @@ class GraphSettings(BaseSettings):
 
 class AgentSettings(BaseSettings):
     """Agents reach data only through MCP servers; this is where sql-mcp and docs-mcp are (env:
-    SQL_MCP_URL, DOCS_MCP_URL).
+    SQL_MCP_URL, DOCS_MCP_URL, ANALYTICS_MCP_URL).
     AGENT_MAX_OUTPUT_TOKENS bounds one generation of the SQL agent (thinking tokens included)."""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     sql_mcp_url: str = "http://127.0.0.1:8102/mcp"
     docs_mcp_url: str = "http://127.0.0.1:8101/mcp"
+    analytics_mcp_url: str = "http://127.0.0.1:8103/mcp"
     agent_max_output_tokens: int = 800
 
 
@@ -285,6 +339,14 @@ def get_docs_reader_settings() -> DocsReaderSettings:
 
 def get_sql_mcp_settings() -> SqlMcpSettings:
     return SqlMcpSettings()
+
+
+def get_artifact_settings() -> ArtifactSettings:
+    return ArtifactSettings()
+
+
+def get_analytics_settings() -> AnalyticsSettings:
+    return AnalyticsSettings()
 
 
 def get_llm_settings() -> LlmSettings:

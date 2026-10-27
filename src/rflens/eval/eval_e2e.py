@@ -19,6 +19,7 @@ from collections import Counter
 from dataclasses import asdict
 from pathlib import Path
 
+from rflens.agents.analytics_tools import AnalyticsMcpTools, AnalyticsMcpUnavailable
 from rflens.agents.sql_prompt import build_system_prompt
 from rflens.agents.sql_tools import SqlMcpTools, SqlMcpUnavailable
 from rflens.config import LlmSettings, get_agent_settings, get_graph_settings, get_llm_settings
@@ -33,7 +34,7 @@ from rflens.llm.gateway import _repo_path, build_gateway
 
 CALLS_PER_QUESTION = 10  # ORCH_MAX_CALLS_PER_QUESTION
 DEFAULT_STOP_USD = 0.40
-TYPES = ("sql", "doc", "mixed", "refuse")
+TYPES = ("sql", "doc", "mixed", "stats", "refuse")
 AUTHORS = ("human", "assistant")
 
 
@@ -100,7 +101,7 @@ def evaluate(
         thread = f"{run_id}-{q.id}"
         try:
             outcome = ask(graph, q.question, thread)
-        except (LLMError, SqlMcpUnavailable, DocsMcpUnavailable) as e:
+        except (LLMError, SqlMcpUnavailable, DocsMcpUnavailable, AnalyticsMcpUnavailable) as e:
             stopped = f"{q.id}: {type(e).__name__}: {e}"
             break
         scored = score_question(q, outcome.state)
@@ -204,9 +205,13 @@ def render_report(scores: list[Score], questions: dict[str, GoldenQuestion]) -> 
 
 
 def reference_text(q: GoldenQuestion) -> str:
-    if q.type == "refuse":
+    if q.type == "refuse" or q.expected_refusal:
         return f"a refusal ({q.expected_refusal})"
     parts = []
+    if q.reference_analysis:
+        checks = (q.reference_stats or {}).get("checks") or []
+        first = [(c["path"], c["value"]) for c in checks[:4]]
+        parts.append(f"analysis {q.reference_analysis} checks {first}")
     if q.reference_result is not None:
         ref = q.reference_result
         parts.append(f"result {ref.columns} {ref.rows[:5]}")
@@ -226,6 +231,7 @@ def result_cells(scores: list[Score]) -> dict[str, str]:
         "sql": sm["type"]["sql"],
         "doc": f"{sm['doc_answer']} / {sm['doc_recall_search']}",
         "mixed": sm["type"]["mixed"],
+        "stats": sm["type"]["stats"],
         "refuse": sm["type"]["refuse"],
         "human": sm["author"]["human"],
         "assistant": sm["author"]["assistant"],
@@ -327,6 +333,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--stop-usd", type=float, default=DEFAULT_STOP_USD)
     parser.add_argument("--note", default="", help="one line for the last column of RESULTS.md")
     parser.add_argument("--rescore", metavar="RUN_ID", help="score a saved run's threads again")
+    parser.add_argument(
+        "--only",
+        metavar="IDS",
+        help="comma-separated question ids to run (a smoke run); all questions otherwise",
+    )
     parser.add_argument("--baseline", metavar="RUN_ID", help="compare with this earlier run")
     args = parser.parse_args(argv)
 
@@ -348,12 +359,23 @@ def main(argv: list[str] | None = None) -> int:
     if bad:
         print("golden set problems:\n  " + "\n  ".join(bad), file=sys.stderr)
         return 2
+    if args.only:
+        wanted = [i.strip() for i in args.only.split(",") if i.strip()]
+        unknown = [i for i in wanted if i not in {q.id for q in questions}]
+        if unknown:
+            print(f"ERROR: unknown question id(s): {unknown}", file=sys.stderr)
+            return 2
+        questions = [q for q in questions if q.id in wanted]
 
     sql_tools, docs_tools = SqlMcpTools(agent.sql_mcp_url), DocsMcpTools(agent.docs_mcp_url)
+    analytics_tools = AnalyticsMcpTools(agent.analytics_mcp_url)
     try:
         system_prompt = build_system_prompt(sql_tools.schema_context())
-        docs_tools.search("operating band", None, "vector", 1)  # also needs Ollama
-    except (SqlMcpUnavailable, DocsMcpUnavailable, DocsMcpError) as e:
+        if any(q.type in ("doc", "mixed") for q in questions):
+            docs_tools.search("operating band", None, "vector", 1)  # also needs Ollama
+        if any(q.type == "stats" for q in questions):
+            analytics_tools.menu()  # the analyses themselves also need Docker
+    except (SqlMcpUnavailable, DocsMcpUnavailable, DocsMcpError, AnalyticsMcpUnavailable) as e:
         print(f"ERROR: {e}\nstart the servers with: make servers-up", file=sys.stderr)
         return 2
 
@@ -399,7 +421,14 @@ def main(argv: list[str] | None = None) -> int:
     by_id = {q.id: q for q in questions}
     print("\n" + HEADER)
     with gateway.run("eval-e2e") as run, open_checkpointer() as saver:
-        deps = GraphDeps(run, sql_tools, docs_tools, graph_settings, approval_mode="auto")
+        deps = GraphDeps(
+            run,
+            sql_tools,
+            docs_tools,
+            graph_settings,
+            approval_mode="auto",
+            analytics_tools=analytics_tools,
+        )
         graph = build_graph(deps, saver)
         scores, stopped = evaluate(
             questions, run=run, graph=graph, run_id=run.run_id, stop_usd=args.stop_usd

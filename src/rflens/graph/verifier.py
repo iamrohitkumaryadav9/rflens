@@ -4,7 +4,8 @@ No LLM, no database. `verify(draft, ...)` returns a JSON-able dict:
 
     {"ok": bool, "failures": [{"type", "sentence", "detail"}], "evidence_map": [...]}
 
-Evidence is the SQL result (`[S1]`) and the retrieved spec chunks (`[D1]`, `[D2]`, ...). Checks:
+Evidence is the SQL result (`[S1]`), the retrieved spec chunks (`[D1]`, `[D2]`, ...) and a
+statistical analysis (`[A1]`, the stats route). Checks:
 
 - citations: every `[Sn]` / `[Dn]` must exist (dangling_citation); a sentence with a number that is
   not just the question's own, or with a quotation, needs a citation (missing_citation); a draft
@@ -26,6 +27,15 @@ Evidence is the SQL result (`[S1]`) and the retrieved spec chunks (`[D1]`, `[D2]
 - companies: a SQL that groups by licensee_name together with licensee_frn, or by licensee_name
   alone while v_uls_licences exposes licensee_frn, splits one company across its name spellings
   (frn_name_grouping; the schema comments say to group by licensee_frn alone).
+- statistics (stats route): a number must be a numeric leaf of the cited analysis result or its
+  parameters, a run count, a percentage of a share, a bound such as "p < 0.001" that a p- or
+  q-value in the result satisfies, or a sum, difference or ratio of leaves of one result row.
+  Feature values have no unit (invented_unit). Three rules of the statistics: "significant" needs
+  a p- or q-value in the result below 0.05 (unsupported_stat_claim; "not significant" needs one at
+  or above it); cause words are refused (causal_claim: SECOM is observational); a p-value in the
+  answer needs the number of values behind it (missing_n); an n stated in a sentence about a test
+  must be one of that test's group sizes or their total, not another number of the result such as
+  the runs of the extract (wrong_n).
 - mixed questions: each numeric literal that the SQL agent compared with a frequency column in a
   WHERE clause (a band edge) must appear in the text of a cited chunk (unsupported_sql_literal).
   Zero is exempt: it is a guard, not an edge.
@@ -38,8 +48,8 @@ from typing import Any
 import sqlglot
 from sqlglot import exp
 
-CITE_RE = re.compile(r"\[([SD])(\d+)\]")
-NUM_RE = re.compile(r"(?<![\w.,])-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?![\w])")
+CITE_RE = re.compile(r"\[([SDA])(\d+)\]")
+NUM_RE = re.compile(r"(?<![\w.,])-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][-+]?\d+)?(?![\w])")
 UNIT_NAMES = r"dBm|dBi|dBc|dBW|dB|MHz|GHz|kHz|Hz|mW|kW|ms|km"
 UNIT_AFTER_NUMBER_RE = re.compile(rf"(?:\d)\s*({UNIT_NAMES})(?![A-Za-z])", re.I)
 UNIT_ANYWHERE_RE = re.compile(rf"(?<![A-Za-z])({UNIT_NAMES})(?![A-Za-z])", re.I)
@@ -57,8 +67,12 @@ def clean_numbers(text: str) -> str:
 
 
 def parse_number(token: str) -> tuple[float, int]:
+    """(value, decimals the writer gave it). 1.5e-06 has 7 decimals: 1.5 shifted by the exponent."""
     plain = token.replace(",", "")
-    decimals = len(plain.split(".")[1]) if "." in plain else 0
+    mantissa, _, exponent = plain.lower().partition("e")
+    decimals = len(mantissa.split(".")[1]) if "." in mantissa else 0
+    if exponent:
+        decimals = max(decimals - int(exponent), 0)
     return float(plain), decimals
 
 
@@ -88,7 +102,9 @@ def _norm(text: str) -> str:
 
 
 def _close(candidate: float, value: float, decimals: int) -> bool:
-    return abs(candidate - value) <= 0.5 * 10**-decimals + 1e-9
+    """`value` is `candidate` rounded to `decimals`. The float slack is relative: a fixed 1e-9 would
+    make every tiny number (a p-value of 1e-12) match any other."""
+    return abs(candidate - value) <= 0.5 * 10**-decimals + 1e-9 * max(abs(candidate), abs(value))
 
 
 def _sql_cells(sql: dict | None) -> list[list[Any]]:
@@ -140,6 +156,209 @@ def sql_numbers(sql: dict | None) -> tuple[set[float], set[float]]:
 
 def sql_text(sql: dict | None) -> str:
     return "\n".join(str(c) for col in _sql_cells(sql) for c in col if isinstance(c, str))
+
+
+P_BOUNDS = (0.1, 0.05, 0.01, 0.001, 0.0001, 0.00001, 0.000001)
+MAX_ROW_LEAVES = 12
+# the keys that hold the number of values a statistic rests on (not the runs of the extract)
+SAMPLE_KEYS = {"n", "n_pass", "n_fail", "n_pairs"}
+P_KEYS = {"p_value", "q_value"}
+NO_COMBINE = P_KEYS | {"alpha"}  # never combined arithmetically (their combinations are noise)
+MIN_DERIVED = 0.01  # a derived number below this is noise (0.05 / 97), not something to state
+
+
+def _combos(values: list[float], out: set[float]) -> None:
+    """Sums, differences and ratios (also as percentages) of the values of one result row."""
+    for a, b in itertools.combinations(values[:MAX_ROW_LEAVES], 2):
+        found = {a + b, abs(a - b)}
+        if b:
+            found.update((a / b, a / b * 100))
+        if a:
+            found.update((b / a, b / a * 100))
+        if a + b:  # each as a share of the two together
+            found.update((a / (a + b), a / (a + b) * 100, b / (a + b), b / (a + b) * 100))
+        out.update(v for v in found if abs(v) >= MIN_DERIVED)
+
+
+def stats_evidence(stats: dict) -> dict[str, Any]:
+    """What the answer may say about an analysis result [A1]: its numeric leaves (result,
+    parameters, run counts), numbers derived within one result row, the bounds that its p- and
+    q-values satisfy, and which leaves are p/q-values and group sizes."""
+    leaves: list[tuple[str, float]] = []
+    derived: set[float] = set()
+    totals: set[float] = set()  # group sizes added up: the total tested n of a comparison
+
+    def numeric(v: Any) -> bool:
+        return isinstance(v, int | float) and not isinstance(v, bool)
+
+    def walk(node: Any, key: str = "") -> None:
+        if numeric(node):
+            leaves.append((key, float(node)))
+        elif isinstance(node, dict):
+            if numeric(node.get("n_pass")) and numeric(node.get("n_fail")):
+                totals.add(float(node["n_pass"]) + float(node["n_fail"]))
+            sizes = [
+                float(c["n"]) for c in node.values() if isinstance(c, dict) and numeric(c.get("n"))
+            ]
+            if len(sizes) > 1:
+                totals.add(sum(sizes))
+            row = [float(v) for k, v in node.items() if numeric(v) and k not in NO_COMBINE]
+            if len(row) > 1:
+                _combos(row, derived)
+            children = [v for v in node.values() if isinstance(v, dict)]
+            if len(children) > 1:  # sibling dicts (groups): same key across them
+                for k in {k for c in children for k in c} - NO_COMBINE:
+                    same = [float(c[k]) for c in children if numeric(c.get(k))]
+                    if len(same) > 1:
+                        _combos(same, derived)
+            for k, v in node.items():
+                walk(v, k)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v, key)
+
+    walk(stats.get("result"))
+    walk(stats.get("params"))
+    leaves += [
+        ("n_runs_used", float(stats.get("n_runs_used") or 0)),
+        ("n_runs_in_extract", float(stats.get("n_runs_in_extract") or 0)),
+    ]
+    values = {v for _, v in leaves}
+    p_values = [v for k, v in leaves if k in P_KEYS]
+    for k, v in leaves:
+        if k not in NO_COMBINE and 0 <= v <= 1:
+            derived.add(v * 100)  # a share written as a percentage
+    for p in p_values:
+        derived.update(t for t in P_BOUNDS if p < t)  # "p < 0.001" is true
+    sample_sizes = {v for k, v in leaves if k in SAMPLE_KEYS} | totals
+    runs = {v for k, v in leaves if k in ("n_runs_used", "n_runs_in_extract")}
+    return {
+        "values": values,
+        "derived": derived,
+        "p_values": p_values,
+        # what a statistic can rest on; the runs of the extract only if nothing else is stated
+        "n_values": sample_sizes or runs,
+        "sample_sizes": sample_sizes,
+    }
+
+
+SIGNIFICANT_RE = re.compile(r"\bsignifican(?:t|tly|ce)\b", re.I)
+NOT_SIGNIFICANT_RE = re.compile(
+    r"\b(?:not|no|non|nor|never|isn't|aren't|wasn't|weren't)\b[\w\s,-]{0,40}\bsignifican|"
+    r"\binsignificant|\bnon-significant",
+    re.I,
+)
+P_MENTION_RE = re.compile(r"\b[pq][- ]?values?\b|\b[pq]\s*[=<>≤≥]", re.I)
+CAUSAL_RE = re.compile(
+    r"\b(?:cause[sd]?|causing|caused\s+by|leads?\s+to|led\s+to|due\s+to|results?\s+in|"
+    r"resulting\s+in|because\s+of|drives?|driven\s+by|responsible\s+for)\b",
+    re.I,
+)
+TEST_RE = re.compile(
+    r"\b(?:tests?|mann-whitney|welch|t-test|spearman|pearson|correlation|effect\s+size|"
+    r"rank-biserial|significan\w*|p-values?|q-values?)\b|\b[pq]\s*[=<>≤≥]",
+    re.I,
+)
+# a number stated as a sample size: "n=104", "n of 1,456", "1456 passing", "104 failing values"
+N_STATED_RES = (
+    re.compile(r"\bn\s*(?:=|:|of)\s*(-?[\d,]+(?:\.\d+)?)", re.I),
+    re.compile(
+        r"(?<![\w.,])(-?[\d,]*\d)\s+(?:(?:passing|failing|pass|fail|valid|non-missing|paired)\s+)?"
+        r"(?:values?|runs?|samples?|observations?|measurements?|pairs?|wafers?|lots?)\b",
+        re.I,
+    ),
+    re.compile(r"(?<![\w.,])(-?[\d,]*\d)\s+(?:passing|failing|pass|fail)\b", re.I),
+)
+NEGATION_RE = re.compile(r"\b(?:not|no|cannot|can't|without|neither|nor)\b|n't\b", re.I)
+
+
+def stats_claim_failures(draft: str, evidence: dict[str, Any]) -> list[Failure]:
+    """unsupported_stat_claim, causal_claim, wrong_n and missing_n over the sentences of `draft`."""
+    failures: list[Failure] = []
+    p_values = evidence["p_values"]
+    sentences = split_sentences(draft)
+    first_p_sentence: int | None = None
+    for index, raw in enumerate(sentences):
+        sentence = CITE_RE.sub("", raw)
+        if P_MENTION_RE.search(sentence) and first_p_sentence is None:
+            first_p_sentence = index
+        if SIGNIFICANT_RE.search(sentence):
+            if NOT_SIGNIFICANT_RE.search(sentence):
+                if not any(p >= 0.05 for p in p_values):
+                    failures.append(
+                        _fail(
+                            "unsupported_stat_claim",
+                            index,
+                            "'not significant' needs a p- or q-value of 0.05 or more in the result",
+                        )
+                    )
+            elif not any(p < 0.05 for p in p_values):
+                why = "the analysis has none" if not p_values else "all are 0.05 or more"
+                failures.append(
+                    _fail(
+                        "unsupported_stat_claim",
+                        index,
+                        f"'significant' needs a p- or q-value below 0.05 in the result ({why})",
+                    )
+                )
+            elif not P_MENTION_RE.search(draft) and not any(
+                abs(p - v) <= 0.5 * 10**-d
+                for m in NUM_RE.finditer(clean_numbers(draft))
+                for v, d in [parse_number(m.group(0))]
+                for p in p_values
+            ):
+                failures.append(
+                    _fail(
+                        "unsupported_stat_claim",
+                        index,
+                        "'significant' must come with the p- or q-value it rests on",
+                    )
+                )
+        sizes = evidence["sample_sizes"]
+        if sizes and TEST_RE.search(sentence):
+            reported: set[float] = set()  # the patterns overlap: one failure per stated number
+            for pattern in N_STATED_RES:
+                for m in pattern.finditer(clean_numbers(sentence)):
+                    stated = float(m.group(1).replace(",", ""))
+                    if stated in reported:
+                        continue
+                    reported.add(stated)
+                    if not any(abs(stated - s) < 0.5 for s in sizes):
+                        shown = ", ".join(f"{s:g}" for s in sorted(sizes)[:8])
+                        failures.append(
+                            _fail(
+                                "wrong_n",
+                                index,
+                                f"n = {m.group(1)} is not a number of values the test used "
+                                f"(its group sizes and total: {shown})",
+                            )
+                        )
+        if CAUSAL_RE.search(sentence) and not NEGATION_RE.search(sentence):
+            failures.append(
+                _fail(
+                    "causal_claim",
+                    index,
+                    "the analysis shows an association in observational data, not a cause: "
+                    f"remove '{CAUSAL_RE.search(sentence).group(0)}'",
+                )
+            )
+    # a p-value (stated as such, or as a number equal to one) needs the n behind it
+    numbers = [
+        parse_number(m.group(0)) for m in NUM_RE.finditer(clean_numbers(CITE_RE.sub("", draft)))
+    ]
+    states_p = first_p_sentence is not None or any(
+        abs(p - v) <= 0.5 * 10**-d and p < 1 for v, d in numbers for p in p_values
+    )
+    has_n = any(abs(n - v) < 1e-9 for v, _ in numbers for n in evidence["n_values"])
+    if states_p and not has_n:
+        failures.append(
+            _fail(
+                "missing_n",
+                first_p_sentence,
+                "a p-value is stated without the number of values (n) it rests on",
+            )
+        )
+    return failures
 
 
 def sql_band_edges(executed_sql: str | None) -> list[tuple[str, float]]:
@@ -202,10 +421,13 @@ def verify(
     sql: dict | None,
     chunks: list[dict],
     sql_question: str = "",
+    stats: dict | None = None,
 ) -> dict:
     failures: list[Failure] = []
     evidence_map: list[dict] = []
     sql_ok = bool(sql) and sql.get("status") == "answered"
+    stats_ok = bool(stats) and stats.get("status") == "answered"
+    stats_ev = stats_evidence(stats) if stats_ok else None
     if not draft.strip():
         return {
             "ok": False,
@@ -218,10 +440,11 @@ def verify(
     flags: dict[str, dict] = (sql or {}).get("column_flags") or {}
     question_numbers = numbers_in(question)
     sql_literals = numbers_in(executed)
-    row_numbers = {
-        float((sql or {}).get("row_count") or 0),
-        float(len((sql or {}).get("rows") or [])),
-    }
+    # the SQL result's row count (zero included) is a number the answer may state; without a SQL
+    # result there is none, or a tiny number such as a p-value would match the "0 rows" of nothing
+    row_numbers = (
+        {float(sql.get("row_count") or 0), float(len(sql.get("rows") or []))} if sql_ok else set()
+    )
     cited = {(m.group(1), int(m.group(2))) for m in CITE_RE.finditer(draft)}
     cited_chunks = [c for i, c in enumerate(chunks, start=1) if ("D", i) in cited]
     chunk_numbers: dict[int, set[float]] = {
@@ -231,9 +454,10 @@ def verify(
 
     # --- dangling citations ---------------------------------------------------------------------
     valid = {("D", i) for i in range(1, len(chunks) + 1)} | ({("S", 1)} if sql_ok else set())
+    valid |= {("A", 1)} if stats_ok else set()
     for kind, n in sorted(cited - valid):
         failures.append(_fail("dangling_citation", None, f"[{kind}{n}] does not exist"))
-    if (sql_ok or chunks) and not (cited & valid):
+    if (sql_ok or chunks or stats_ok) and not (cited & valid):
         failures.append(_fail("missing_citation", None, "the answer cites no source"))
 
     # --- the band rows the doc agent supplied must be cited --------------------------------------
@@ -277,6 +501,7 @@ def verify(
                 cited,
                 question_numbers,
                 sql_literals | row_numbers,
+                stats_ev,
             )
             numbers.append({"number": m.group(0), "source": source[0], "match": source[1]})
             if source[0] == "unsupported":
@@ -301,7 +526,22 @@ def verify(
         for um in UNIT_AFTER_NUMBER_RE.finditer(body):
             unit = um.group(1).lower()
             only_sql = not sentence_chunk_cites and ("S", 1) in cites
-            if unknown_columns and only_sql:
+            only_stats = (
+                stats_ok
+                and ("A", 1) in cites
+                and not sentence_chunk_cites
+                and ("S", 1) not in cites
+            )
+            if only_stats:
+                if unit not in question_units:
+                    failures.append(
+                        _fail(
+                            "invented_unit",
+                            index,
+                            f"unit {um.group(1)} on a SECOM feature value, which has no known unit",
+                        )
+                    )
+            elif unknown_columns and only_sql:
                 if unit not in question_units:
                     failures.append(
                         _fail(
@@ -324,6 +564,10 @@ def verify(
                 "numbers": numbers,
             }
         )
+
+    # --- statistics: significance words, causes, the n behind a p-value ---------------------------
+    if stats_ev is not None:
+        failures += stats_claim_failures(draft, stats_ev)
 
     # --- assumptions ----------------------------------------------------------------------------
     assumed = [name for name, f in flags.items() if f.get("assumed")]
@@ -513,6 +757,7 @@ def _number_source(
     cited: set[tuple[str, int]],
     question_numbers: set[float],
     sql_text_numbers: set[float],
+    stats_ev: dict[str, Any] | None = None,
 ) -> tuple[str, str]:
     """(source, match) for one draft number; source 'unsupported' when no evidence supports it."""
     if any(abs(c - value) < 1e-9 for c in cells):
@@ -528,4 +773,11 @@ def _number_source(
         return "sql", "rounded"
     if any(_close(c, value, decimals) for c in derived):
         return "sql", "derived"
+    if stats_ev is not None:  # relative to the writer's own precision, never a fixed epsilon
+        if any(c == value for c in stats_ev["values"]):
+            return "stats", "exact"
+        if any(_close(c, value, decimals) for c in stats_ev["values"]):
+            return "stats", "rounded"
+        if any(_close(c, value, decimals) for c in stats_ev["derived"]):
+            return "stats", "derived"
     return "unsupported", ""

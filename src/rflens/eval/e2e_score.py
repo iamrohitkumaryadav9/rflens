@@ -9,6 +9,11 @@ Pure functions of a golden question and the final graph state (a JSON dict); no 
   and the answer is `answered` with verification passed. Evidence recall is reported separately:
   the expected target among the search results, and among the chunks the writer was given.
 - mixed: the doc part as for doc, and the SQL part as for sql (incl. `must_mention`).
+- stats: the final state holds an answered analysis of the reference menu entry whose result
+  passes every `reference_stats.checks` entry (numbers at 1e-6 relative, strings and lists exactly),
+  the answer cites it [A1] and its text contains `answer_rows` (a ranked list in order); a stats
+  question that must be refused is scored like a refuse question and also needs that no analysis
+  ran.
 - refuse: status `refused` with a reason, and no SQL query and no document search ran.
 
 Order (ranked questions only), scorer v2: the order of ROWS is checked, never the order of values
@@ -22,6 +27,7 @@ at the text's own precision (12.35 -> 12.3, 12; 1,234 = 1234); zero also matches
 zero / no / none; a string matches case-insensitively as a substring. NULL needs no text.
 """
 
+import math
 import re
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -39,6 +45,7 @@ CAUSES = (
     "writer/verifier redaction",
     "wrong route",
     "refusal error",
+    "wrong analysis",
     "scorer issue",
     "other",
 )
@@ -213,6 +220,58 @@ def _doc_part(q: GoldenQuestion, state: dict, cited: list[str]) -> tuple[bool, s
     return True, ""
 
 
+def _at(obj: Any, path: str) -> Any:
+    """`top.0.feature`: dict keys and list indexes separated by dots."""
+    for part in path.split("."):
+        obj = obj[int(part)] if isinstance(obj, list) else obj[part]
+    return obj
+
+
+def _same(actual: Any, expected: Any) -> bool:
+    if isinstance(expected, bool) or not isinstance(expected, int | float):
+        if isinstance(expected, list):
+            return (
+                isinstance(actual, list)
+                and len(actual) == len(expected)
+                and all(_same(a, e) for a, e in zip(actual, expected, strict=True))
+            )
+        return actual == expected
+    return (
+        isinstance(actual, int | float)
+        and not isinstance(actual, bool)
+        and math.isclose(actual, expected, rel_tol=1e-6, abs_tol=1e-12 if expected == 0 else 0.0)
+    )
+
+
+def _stats_part(q: GoldenQuestion, state: dict, answer: str, cited: list[str]) -> tuple[bool, str]:
+    stats = state.get("stats")
+    if not stats or stats.get("status") != "answered":
+        return False, "no answered analysis in the final state"
+    if "A1" not in cited:
+        return False, "the answer does not cite the analysis [A1]"
+    wanted = (q.reference_analysis or {}).get("analysis")
+    if stats.get("analysis") != wanted:
+        return False, f"the agent ran {stats.get('analysis')}, the reference is {wanted}"
+    for check in (q.reference_stats or {}).get("checks") or []:
+        try:
+            actual = _at(stats["result"], check["path"])
+        except (KeyError, IndexError, TypeError, ValueError):
+            return False, f"the result has no {check['path']}"
+        if not _same(actual, check["value"]):
+            return False, f"{check['path']} is {actual!r}, the reference is {check['value']!r}"
+    rows = (q.reference_stats or {}).get("answer_rows") or []
+    ok, reason = (
+        contains_values(
+            answer,
+            ResultSet(["v"] * len(rows[0]), rows),
+            bool((q.reference_stats or {}).get("ordered")),
+        )
+        if rows
+        else (True, "")
+    )
+    return ok, reason
+
+
 def _refuse_part(state: dict) -> tuple[bool, str]:
     if state.get("status") != "refused":
         return False, f"expected a refusal, status is {state.get('status')}"
@@ -220,6 +279,8 @@ def _refuse_part(state: dict) -> tuple[bool, str]:
         return False, "refused without a reason"
     sql = state.get("sql") or {}
     ran = []
+    if (state.get("stats") or {}).get("status") == "answered":
+        ran.append("an analysis")
     if sql.get("query_id") is not None:
         ran.append("a SQL query")
     if state.get("chunks") or state.get("doc_hits") or state.get("band_lookup"):
@@ -239,8 +300,11 @@ def score_question(q: GoldenQuestion, state: dict) -> Score:
     reasons: list[str] = []
 
     sql_ok = doc_hit = recall_search = recall_evidence = None
-    if q.type == "refuse":
+    if q.type == "refuse" or (q.type == "stats" and q.expected_refusal):
         ok, reason = _refuse_part(state)
+        correct, reasons = ok, ([] if ok else [reason])
+    elif q.type == "stats":
+        ok, reason = _stats_part(q, state, answer, cited)
         correct, reasons = ok, ([] if ok else [reason])
     else:
         if q.type in SQL_TYPES:
@@ -282,6 +346,7 @@ def score_question(q: GoldenQuestion, state: dict) -> Score:
             "halt": state.get("halt"),
             "plan": state.get("plan"),
             "sql": state.get("sql"),
+            "stats": state.get("stats"),
             "chunk_ids": [c["chunk_id"] for c in state.get("chunks") or []],
             "doc_hits": state.get("doc_hits"),
             "redacted": verification.get("redacted"),
@@ -296,10 +361,17 @@ def classify_miss(
     """A first guess at the cause of a miss, from the state alone; a human reads each miss."""
     status = state.get("status")
     route = state.get("route")
-    if q.type == "refuse":
+    if q.type == "refuse" or (q.type == "stats" and q.expected_refusal):
         return "refusal error"
     if route != q.type:
         return "wrong route"
+    if q.type == "stats":
+        stats = state.get("stats") or {}
+        if stats.get("status") != "answered":
+            return "wrong analysis"
+        if status in ("partial", "failed") or not (state.get("verification") or {}).get("ok"):
+            return "writer/verifier redaction"
+        return "wrong analysis"  # it ran, and the verified answer still misses the reference
     if state.get("halt"):
         return "other"
     if doc_hit is False and not recall_evidence:

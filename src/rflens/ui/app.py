@@ -105,6 +105,16 @@ def show_sources(client: ApiClient, view: dict) -> None:
                     st.caption("the result was cut at the row limit")
                 for note in item["notes"]:
                     st.caption(f"agent note: {note}")
+            elif item["kind"] == "stats":
+                st.json({"analysis": item["analysis"], "params": item["params"]})
+                st.json(item["result"], expanded=False)
+                for warning in item["warnings"]:
+                    st.caption(f"warning: {warning}")
+                for art in item["artifacts"]:
+                    try:
+                        st.image(client.artifact(art["id"]), caption=f"artifact {art['id']}")
+                    except ApiError as e:
+                        st.caption(f"(plot not available: {e})")
             else:
                 for line in item["band_lines"]:
                     st.markdown(f"**{line}**")

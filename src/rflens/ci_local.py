@@ -11,6 +11,10 @@ What it reproduces, so that a test that passes only on a developer machine fails
   nothing else: no .env file, no Ollama, no sql-mcp or docs-mcp, no API keys;
 - the workflow's `run:` steps, in order, stopping at the first failure like Actions does.
 
+Steps that need a Docker daemon (the analytics sandbox container tests) cannot run inside the
+ci-local container, which has none. They are NOT silently skipped: the plan, the end of the run
+and the final verdict list them as NOT RUN, and `make test-analytics` runs them.
+
 It does not run `uses:` steps (checkout, setup-uv): the copy replaces checkout and uv is installed
 with pip. The runner is python:3.12-bookworm (Debian, with git), not GitHub's ubuntu image.
 Run it before pushing changes to tests, the workflow, migrations or settings.
@@ -18,6 +22,7 @@ Run it before pushing changes to tests, the workflow, migrations or settings.
 
 import argparse
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -61,8 +66,32 @@ def runner_env(job: dict, db_host: str) -> dict[str, str]:
     return env
 
 
-def steps_script(steps: list[str]) -> str:
-    """A bash script that runs the steps in order and stops at the first failure."""
+NOT_RUN_REASON = "each needs a Docker daemon and the ci-local container has none"
+
+
+def needs_docker(command: str) -> bool:
+    """A step that starts containers (docker ...) or runs the tests that do (tests_docker/)."""
+    return command.startswith("docker ") or "tests_docker" in command
+
+
+def split_steps(steps: list[str]) -> tuple[list[str], list[str]]:
+    """(steps ci-local runs, steps it cannot run). Never silent: run() prints the second list."""
+    return [s for s in steps if not needs_docker(s)], [s for s in steps if needs_docker(s)]
+
+
+def not_run_notice(skipped: list[str]) -> list[str]:
+    if not skipped:
+        return []
+    return [
+        f"NOT RUN: {len(skipped)} workflow step(s), because {NOT_RUN_REASON}:",
+        *[f"  - {s}" for s in skipped],
+        "  Run them with `make test-analytics`; the GitHub workflow runs them.",
+    ]
+
+
+def steps_script(steps: list[str], not_run: list[str] | None = None) -> str:
+    """A bash script that runs the steps in order and stops at the first failure. `not_run` steps
+    are not executed; the script prints a notice for them before it ends."""
     lines = [
         "set -u",
         "export HOME=/tmp PATH=/tmp/.local/bin:$PATH UV_PROJECT_ENVIRONMENT=/tmp/venv",
@@ -74,6 +103,8 @@ def steps_script(steps: list[str]) -> str:
         lines.append(f'n=$((n+1)); echo; echo "::step $n:: {command}"')
         lines.append(f"{command}\nrc=$?")
         lines.append('if [ $rc -ne 0 ]; then echo "::failed step $n (exit $rc)::"; exit $rc; fi')
+    for notice in not_run_notice(not_run or []):
+        lines.append(f"echo {shlex.quote(notice)}")
     lines.append('echo "::all steps passed::"')
     return "\n".join(lines) + "\n"
 
@@ -140,13 +171,15 @@ def run(plan_only: bool = False) -> int:
     job = load_job()
     db_name = f"rflens-ci-local-pg-{uuid.uuid4().hex[:6]}"
     env = runner_env(job, db_name)
-    script = steps_script(job["steps"])
+    to_run, skipped = split_steps(job["steps"])
+    script = steps_script(to_run, skipped)
     print(f"workflow: {WORKFLOW.relative_to(REPO_ROOT)} (job '{JOB}')")
     print(f"database: {job['image']}, fresh; runner: {RUNNER_IMAGE}")
     print("env passed (names only): " + ", ".join(sorted(env)))
     print("steps:")
-    for i, command in enumerate(job["steps"], 1):
+    for i, command in enumerate(to_run, 1):
         print(f"  {i}. {command}")
+    print("\n".join(not_run_notice(skipped)))
     if plan_only:
         return 0
     if not docker_available():
@@ -171,7 +204,12 @@ def run(plan_only: bool = False) -> int:
         started = time.monotonic()
         status = subprocess.run([*command, RUNNER_IMAGE, "bash", "/ci/steps.sh"]).returncode
         elapsed = time.monotonic() - started
-        print(f"\nci-local: {'PASSED' if status == 0 else 'FAILED'} in {elapsed:.0f} s")
+        verdict = "PASSED" if status == 0 else "FAILED"
+        print(f"\nci-local: {verdict} in {elapsed:.0f} s")
+        if skipped:
+            print(f"ci-local: {len(skipped)} workflow step(s) NOT RUN, because {NOT_RUN_REASON}:")
+            print("\n".join(f"  - {s}" for s in skipped))
+            print("  They are not covered by this result: `make test-analytics` runs them.")
     except (CiLocalError, subprocess.CalledProcessError, OSError) as e:
         print(f"ERROR: {e}", file=sys.stderr)
         status = 2

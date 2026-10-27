@@ -33,7 +33,8 @@ def badge(status: str, state: dict[str, Any]) -> str:
 
 
 def source_items(state: dict[str, Any]) -> list[dict[str, Any]]:
-    """The sources the answer can cite: S1 (the SQL result) and D1.. (spec chunks)."""
+    """The sources the answer can cite: S1 (the SQL result), A1 (a statistical analysis) and
+    D1.. (spec chunks)."""
     answer = state.get("answer") or ""
     items: list[dict[str, Any]] = []
     sql = state.get("sql")
@@ -50,6 +51,23 @@ def source_items(state: dict[str, Any]) -> list[dict[str, Any]]:
                 "row_count": sql.get("row_count"),
                 "truncated": bool(sql.get("truncated")),
                 "notes": sql.get("notes") or [],
+            }
+        )
+    stats = state.get("stats")
+    if stats and stats.get("status") == "answered":
+        items.append(
+            {
+                "tag": "A1",
+                "kind": "stats",
+                "cited": "[A1]" in answer,
+                "call_id": stats.get("call_id"),
+                "analysis": stats.get("analysis"),
+                "params": stats.get("params"),
+                "analysis_id": stats.get("analysis_id"),
+                "n_runs_used": stats.get("n_runs_used"),
+                "result": stats.get("result"),
+                "artifacts": stats.get("artifacts") or [],
+                "warnings": stats.get("warnings") or [],
             }
         )
     for chunk in state.get("chunks") or []:

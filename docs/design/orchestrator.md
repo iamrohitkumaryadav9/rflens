@@ -16,7 +16,9 @@ restate in detail; compare them with the original step-1 proposal.
    direct database connection of the graph.
 3. Tracing is off: importing `rflens.graph` sets `LANGSMITH_TRACING=false` and refuses to import if
    a tracing switch is on. `LANGGRAPH_STRICT_MSGPACK=true`.
-4. The stats agent / analytics-mcp is week 5: the graph has no node for it, only room for one.
+4. The stats agent reaches the analyses only through analytics-mcp, which runs a fixed menu in a
+   Docker sandbox (see "Stats route (week 5)" below and [analytics.md](analytics.md)). The model
+   chooses an analysis name and JSON parameters and never writes code, SQL or a path.
 
 ## State schema (`graph/state.py`)
 
@@ -25,10 +27,11 @@ JSON types only (checkpoints use strict msgpack; tuples would come back as lists
 | key | meaning |
 |---|---|
 | `question_id`, `question` | thread id (= question id) and the user's text |
-| `route`, `plan` | `sql` / `doc` / `mixed` / `refuse`; plan = spec hint, `doc_query`, `sql_question`, refuse reason, rule matches, planned worst-case USD |
+| `route`, `plan` | `sql` / `doc` / `mixed` / `stats` / `refuse`; plan = spec hint, `doc_query`, `sql_question`, `stats_question`, refuse reason, rule matches, planned worst-case USD |
 | `spec`, `spec_source` | spec filter (`36.101`, `38.101-1` or none) and where it came from: `rule`, `llm-hint`, `human`, `ambiguous`, `none` |
 | `approval` | `{needed, reasons, decision{approve, by}}` |
 | `chunks` | retrieved spec chunks `D1..Dn` (id, spec, version, clause, title, table, text, cut) |
+| `stats` | stats agent result `A1`: status, analysis, params (validated, defaults filled in), `call_id` (its `analytics_call_log` row), `analysis_id`, result (JSON, at most 64 KB), artifacts (plot ids), dataset (extract SHA-256), runs used, missing-value policy, warnings, notes |
 | `sql` | SQL agent result `S1`: status, SQL, executed SQL, `query_id`, columns, rows (at most `ORCH_MAX_STATE_ROWS`), notes, `column_flags` (UNKNOWN / ASSUMED units) |
 | `draft`, `writer_attempts` | writer output and attempt count |
 | `draft_history` | every writer draft with its verification failures (`{attempt, draft, ok, failures}`), kept in the checkpoint |
@@ -44,6 +47,7 @@ START -> planner -> approval -> doc_agent -> (mixed) sql_agent -> writer -> veri
                        |            +--(doc) writer                   +--retry--+ (<= 2 retries)
                        +--(sql) sql_agent                                         v
          planner --(refuse / halt)--> finalize                                  redact -> finalize
+                       +--(stats)--> stats_agent --> writer (as above)
 ```
 
 - **planner** — one LLM call returning `route`, `spec` hint, `doc_query`, `sql_question`,
@@ -112,9 +116,11 @@ the logged query.
 
 ## Citation format
 
-`[S1]` = the SQL result (one query per question); `[D1]`, `[D2]`, ... = retrieved chunks in
-retrieval order. The writer cites; the **Sources section is built by code** from the tags that
-remain in the final text: `[S1] sql-mcp query #<id> (<n> row(s)): <executed SQL>` and
+`[S1]` = the SQL result (one query per question); `[A1]` = the statistical analysis (one per
+question); `[D1]`, `[D2]`, ... = retrieved chunks in retrieval order. The writer cites; the **Sources section is built by code** from the tags that
+remain in the final text: `[S1] sql-mcp query #<id> (<n> row(s)): <executed SQL>`, `[A1] analytics-mcp call #<id>:
+<analysis>(<params>) on SECOM, <n> run(s), extract <sha-prefix>` (plus one line per plot
+artifact) and
 `[D<n>] TS <spec> V<version>, clause <c>, <title>, table <t> (chunk <chunk_id>)`.
 
 ## Verifier rules (`graph/verifier.py`)
@@ -422,7 +428,70 @@ entities leave out NULL keys unless the question asks about missing values.
 **`missing_band_citation`** (verifier, a prose failure sent to the writer): when the doc agent
 supplied band rows, the answer must cite at least one of the chunks that hold them.
 
+## Stats route (week 5)
+
+Design and sandbox: [analytics.md](analytics.md). In the graph:
+
+- **planner** has a fourth source, `stats`: descriptive analyses of the SECOM measurements from the
+  fixed menu (which features differ between pass and fail, distributions, correlations, outliers,
+  missing values, plots). It returns `stats_question` (the question restated for the analysis
+  step). Training a model, predicting or classifying unseen data, causes, custom code or formulas
+  are `refuse` at the planner; the stats agent can refuse too.
+- **stats_agent** — one LLM call (`purpose=stats-agent`, temperature as configured) returns
+  `{refuse, refuse_reason, analysis, params_json}`; `params_json` is a string because a free-form
+  object is not a reliable structured-output type. analytics-mcp validates the parameters again;
+  a rejection (invalid parameters, or an analysis the data cannot answer such as too few values)
+  goes back to the model once, so at most 2 calls. A sandbox failure (timeout, docker error) is
+  not corrected: the question ends `failed`. The planner's `stats_question` is appended to the
+  question text the agent sees; `sql_query_log`-style traceability is `analytics_call_log`, which
+  records the original question.
+- **writer** gets `[A1]` as evidence: analysis, parameters, runs used, missing-value policy,
+  warnings, the result JSON (cut at 7,000 characters) and plot artifact ids. Its prompt says to
+  state the method, the numbers of values behind each statistic, effect sizes and p-values from
+  the evidence, never to use cause words, and to write feature values without a unit.
+- **verifier**: `[A1]` is a number source (see "Statistics rules" below). The three new failures
+  are prose failures, so they go to the writer (up to 2 retries) and then `redact`; there is no
+  second stats-agent attempt (a build difference from the first design).
+- **approval**: the planned worst case of a stats question is 2 stats-agent calls plus the writer
+  calls. `finalize`: a stats-agent refusal ends the question `refused`, a failed analysis
+  `failed` (no writer call).
+- `GraphDeps.analytics_tools` (an `AnalyticsMcpTools`) is `None` unless the caller supplies it; a
+  stats question then stops with "analytics-mcp is not configured". The CLI, the API service and
+  `make eval-e2e` supply it (`ANALYTICS_MCP_URL`, default `http://127.0.0.1:8103/mcp`).
+- API: `GET /artifacts/{id}` serves a plot by its analysis id (64 hex characters, validated; never
+  a path), behind the API key. The UI shows `[A1]` with its parameters, the result and the plot.
+
+### Statistics rules (verifier)
+
+- **Numbers.** A number in the answer must be a numeric leaf of the cited result or of its
+  parameters, a run count, a share of one written as a percentage, a bound such as "p < 0.001"
+  that a p- or q-value in the result satisfies (0.1, 0.05, 0.01, 0.001, 0.0001, 0.00001,
+  0.000001), or a sum, difference, ratio or share of leaves of one result row (or of the same key
+  across sibling groups, such as the pass and fail medians). p-values, q-values and alpha are never
+  combined, and combinations below 0.01 are dropped, because such tiny numbers would make almost
+  any small number the writer invents look derived. Matching is at the draft's own precision and
+  scientific notation is read (`3.4e-10` has 11 decimals). It is a floor, not proof.
+- `unsupported_stat_claim`: "significant" needs a p- or q-value below 0.05 in the result and the
+  p- or q-value (or its number) in the answer; "not significant" needs one at or above 0.05.
+- `causal_claim`: cause, causes, caused by, leads to, due to, results in, because of, drives,
+  responsible for, unless the sentence is negated. SECOM is observational.
+- `missing_n`: a stated p- or q-value needs one of the numbers of values behind the result in the
+  answer. These are the sample sizes of the result (`n`, `n_pass`, `n_fail`, `n_pairs`) and the
+  group sizes added up; the runs of the extract count only when the result has no sample size.
+- `wrong_n` (prose failure, to the writer): an n stated in a sentence about a test (`n=104`,
+  `n of 1,456`, `1456 passing`, `104 failing values`, `1567 runs`) must be one of those sample
+  sizes or their total. Found live: stats-01 said "Mann-Whitney U test (n=1567 ...)", the total
+  number of runs, while the tests rested on 1,456 or 1,461 passing and 104 failing values.
+- `invented_unit`: a value cited only to `[A1]` carries no unit unless the question has it.
+- Two fixes made while building this, both general: the float slack of the rounding match is
+  relative (a fixed 1e-9 made every tiny number match another), and a SQL row count of zero is
+  only a known number when a SQL result exists (without one, `0` matched every tiny value).
+
 ## Build differences (flagged)
+
+- Stats route (week 5): no second stats-agent attempt after a verifier failure (the first design
+  had one); the distribution analysis also returns n, missing count and quartiles, so one call
+  answers "distribution, quartiles and missing values"; `params_json` is a string.
 
 - Approval triggers: the step 2 build had only (b), (d) and (e), with the threshold named
   `ORCH_APPROVAL_USD`; this revision adds (a) and (c) and names the threshold `APPROVAL_COST_USD`.

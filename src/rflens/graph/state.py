@@ -24,7 +24,7 @@ class GraphState(TypedDict, total=False):
     question_id: str
     question: str
     # planner
-    route: str  # sql | doc | mixed | refuse
+    route: str  # sql | doc | mixed | stats | refuse
     plan: dict[str, Any]
     spec: str | None
     spec_source: str  # rule | llm-hint | human | ambiguous | none
@@ -33,6 +33,7 @@ class GraphState(TypedDict, total=False):
     # evidence
     chunks: list[dict[str, Any]]  # [{ref, chunk_id, spec, version, clause, ..., text}]
     sql: dict[str, Any] | None
+    stats: dict[str, Any] | None  # stats agent result A1: analysis, params, result, artifacts, ...
     doc_hits: list[dict[str, Any]]  # every search result (or looked-up chunk): rank, id, clause
     band_lookup: dict[str, Any] | None  # {query_id, requested, found, missing} of the band lookup
     # writer / verifier

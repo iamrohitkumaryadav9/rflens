@@ -110,12 +110,12 @@ def test_the_suggested_port_is_free_and_not_assigned_to_another_server(monkeypat
     suggestion = devservers.suggest_port(SERVERS["docs-mcp"].port)
     assigned = {s.port for s in SERVERS.values()}
     assert suggestion not in assigned and suggestion not in busy
-    assert suggestion == SERVERS["sql-mcp"].port + 1
+    assert suggestion == SERVERS["analytics-mcp"].port + 1  # 8102 and 8103 are assigned
     busy.add(suggestion)  # and when that one is busy too, it moves on
     again = devservers.suggest_port(SERVERS["docs-mcp"].port)
     assert again not in assigned | busy and again > suggestion
     # a port requested for another server in this invocation is reserved as well
-    assert devservers.suggest_port(8100, reserved={8101}) not in {8101, 8102}
+    assert devservers.suggest_port(8100, reserved={8101}) not in {8101, 8102, 8103}
 
 
 def test_the_message_for_a_taken_port_carries_that_suggestion(run_dir, monkeypatch) -> None:
@@ -123,7 +123,7 @@ def test_the_message_for_a_taken_port_carries_that_suggestion(run_dir, monkeypat
     monkeypatch.setattr(devservers, "port_in_use", lambda port: port in busy)
     monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: pytest.fail("must not start"))
     line = devservers.start("docs-mcp", None, run_dir)
-    assert "--port docs-mcp=8103" in line and "docs-mcp=8102" not in line
+    assert "--port docs-mcp=8104" in line and "docs-mcp=8102" not in line
 
 
 STARTER = """

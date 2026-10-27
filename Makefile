@@ -1,4 +1,4 @@
-.PHONY: up down migrate test-db test lint run load-secom load-uls load-fcc-eas fetch-3gpp chunk-3gpp embed-3gpp eval-smoke docs-mcp sql-mcp llm-spend golden-refresh eval-sql eval-docs eval-e2e load-spec-bands orchestrate orchestrate-resume orchestrate-status api ui servers-up servers-status servers-down results-header ci-local
+.PHONY: analytics-mcp analytics-image test-analytics golden-stats-refresh up down migrate test-db test lint run load-secom load-uls load-fcc-eas fetch-3gpp chunk-3gpp embed-3gpp eval-smoke docs-mcp sql-mcp llm-spend golden-refresh eval-sql eval-docs eval-e2e load-spec-bands orchestrate orchestrate-resume orchestrate-status api ui servers-up servers-status servers-down results-header ci-local
 
 up:
 	docker compose up -d --wait
@@ -67,6 +67,23 @@ docs-mcp:
 sql-mcp:
 	uv run python -m rflens.mcp.sql_server
 
+# analytics-mcp (port 8103): fixed menu of statistical analyses, run in a Docker sandbox (needs Docker
+# and make analytics-image).
+analytics-mcp:
+	uv run python -m rflens.mcp.analytics_server
+
+# The sandbox image: fixed analysis code + numpy/scipy/matplotlib (pinned in analytics_runner/requirements.txt).
+ANALYTICS_IMAGE ?= rflens-analytics:v1
+analytics-image:
+	docker build -f analytics_runner/Dockerfile -t $(ANALYTICS_IMAGE) .
+
+# The container tests: the analyses inside the image (no network, read-only), then the isolation and
+# whole-stack tests in tests_docker/. Needs a Docker daemon; make ci-local cannot run them (no Docker
+# inside its container), the GitHub workflow and this target do.
+test-analytics: analytics-image test-db
+	docker run --rm --network none --memory 512m --cpus 1 --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges -e PYTHONPATH=/app $(ANALYTICS_IMAGE) python -m pytest -q -p no:cacheprovider /app/tests
+	uv run python -m pytest tests_docker -q -p no:cacheprovider
+
 # Spend so far, from the llm_calls ledger (total, remaining, today, last calls, top purposes).
 llm-spend:
 	uv run python -m rflens.llm.spend
@@ -85,6 +102,11 @@ ui:
 golden-refresh:
 	uv run python -m rflens.eval.golden
 
+# Store the stats questions' reference values: computed by analytics_runner/reference.py in the sandbox
+# image (independent of the analyses; needs Docker, make analytics-image and the SECOM data).
+golden-stats-refresh:
+	uv run python -m rflens.eval.golden --stats
+
 # SQL agent on the golden sql + refuse questions. PAID: needs LLM_ALLOW_PAID=true and a running
 # sql-mcp. DRY=1 prints the plan and the worst-case cost and makes no LLM call. Every real run
 # appends a row to eval/RESULTS.md; NOTE=... fills its last column.
@@ -98,9 +120,10 @@ eval-docs:
 
 # Every golden question through the whole graph (approval auto), scored on the final answer.
 # PAID: needs LLM_ALLOW_PAID=true and the servers (make servers-up). DRY=1 prints the plan only.
-# STOP_USD=0.40 stops the run (the current question is finished first); NOTE=... fills the note.
+# STOP_USD=0.40 stops the run (the current question is finished first); NOTE=... fills the note;
+# ONLY=stats-01,stats-02 runs just those questions (a smoke run).
 eval-e2e:
-	uv run python -m rflens.eval.eval_e2e $(if $(DRY),--dry-run) $(if $(STOP_USD),--stop-usd $(STOP_USD)) $(if $(NOTE),--note "$(NOTE)")
+	uv run python -m rflens.eval.eval_e2e $(if $(DRY),--dry-run) $(if $(STOP_USD),--stop-usd $(STOP_USD)) $(if $(ONLY),--only "$(ONLY)") $(if $(NOTE),--note "$(NOTE)")
 
 # Refresh the generated golden-set counts at the top of eval/RESULTS.md.
 results-header:

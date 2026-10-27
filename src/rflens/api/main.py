@@ -5,6 +5,7 @@
     GET  /threads/{id}           status, plan, answer, sources, verification, drafts, cost
     GET  /threads                recent threads
     GET  /chunks/{chunk_id}      one spec chunk through docs-mcp (source panel)
+    GET  /artifacts/{id}         a plot (PNG) made by an analysis; id = 64 hex characters
     GET  /health                 open
 
 Every route but /health needs the X-API-Key header (API_KEY in .env) and is rate limited per key.
@@ -14,14 +15,18 @@ Every route but /health needs the X-API-Key header (API_KEY in .env) and is rate
 from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from rflens.agents.analytics_tools import AnalyticsMcpUnavailable
 from rflens.agents.sql_tools import SqlMcpUnavailable
 from rflens.api.security import RateLimiter, make_guard
 from rflens.api.service import (
     THREAD_ID_RE,
+    ArtifactNotFound,
+    BadArtifactId,
     BadChunkId,
     ChunkNotFound,
     NotWaiting,
@@ -99,11 +104,15 @@ def create_app(
             raise HTTPException(404, f"no chunk {e}") from e
         except BadChunkId as e:
             raise HTTPException(422, "invalid chunk id") from e
+        except BadArtifactId as e:
+            raise HTTPException(422, "invalid artifact id") from e
+        except ArtifactNotFound as e:
+            raise HTTPException(404, f"no artifact {e}") from e
         except LLMError as e:
             raise HTTPException(
                 503, f"{type(e).__name__}: {e}. The thread keeps its last checkpoint."
             ) from e
-        except (SqlMcpUnavailable, DocsMcpUnavailable, DocsMcpError) as e:
+        except (SqlMcpUnavailable, DocsMcpUnavailable, DocsMcpError, AnalyticsMcpUnavailable) as e:
             raise HTTPException(503, f"data service unavailable: {e}") from e
 
     @app.post("/ask", dependencies=protected)
@@ -131,6 +140,11 @@ def create_app(
     @app.get("/chunks/{chunk_id:path}", dependencies=protected)
     def chunk(chunk_id: str) -> dict[str, Any]:
         return run(svc.chunk, chunk_id)
+
+    @app.get("/artifacts/{artifact_id}", dependencies=protected)
+    def artifact(artifact_id: str) -> FileResponse:
+        path = run(svc.artifact_path, artifact_id)
+        return FileResponse(path, media_type="image/png")
 
     return app
 

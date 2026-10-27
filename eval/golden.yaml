@@ -783,6 +783,167 @@ questions:
     row_count: 1
     checked_on: '2026-10-25'
     via: sql-mcp
+- id: stats-01
+  type: stats
+  author: assistant
+  status: reviewed
+  question: Which two sensor features in the SECOM data are most strongly associated with failing runs?
+  reference_analysis:
+    analysis: feature_ranking
+    params:
+      top_k: 2
+  notes: 'Interpretation: ''most strongly associated with failing runs'' = the smallest two-sided Mann-Whitney U p-value per feature, which is the method of the menu''s feature_ranking (missing values dropped per feature, features with fewer than 20 values in a group excluded: 466 of 590 features tested). Reference computed independently of the analytics code: analytics_runner/reference.py, run in the sandbox image, calls scipy.stats.mannwhitneyu (method asymptotic, scipy 1.18.1) directly and recomputes every p-value from the textbook formula (average ranks, tie-corrected variance, continuity correction); the two agree to 1e-9. Cross-checked once more with scipy in a scratch venv on a separate dump of the database (top features by p: 60, 104, 248, 520, 511). Cutoff: ranks 2 and 3 differ clearly (p 9.55e-9 vs 1.07e-6, ratio 112) and so do ranks 1 and 2 (5.68e-11 vs 9.55e-9); ranks 3 and 4 (features 248 and 520, p 1.07e-6 and 1.19e-6) are near-tied, so a top 3 would end in the middle of them and a top 4 is not clean either. The answer must name feature 60 then 104 and cite [A1].'
+  reference_stats:
+    via: 'analytics_runner/reference.py, run in the sandbox image: scipy.stats called directly and every Mann-Whitney p-value recomputed from the textbook formula (shares no code with analytics_runner/analyses.py)'
+    scipy: 1.18.1
+    extract_sha256: 1e8cdc69d853a83c4b95656eeea2377e28d790b0abf64c64e4ba9ca604b81ac9
+    n_runs: 1567
+    checked_on: '2026-10-25'
+    checks:
+    - path: top.0.feature
+      value: 60
+    - path: top.0.n_pass
+      value: 1456
+    - path: top.0.n_fail
+      value: 104
+    - path: top.0.p_value
+      value: 5.6786377604731255e-11
+    - path: top.0.q_value
+      value: 2.6462451963804764e-08
+    - path: top.0.rank_biserial
+      value: 0.38408046280642427
+    - path: top.1.feature
+      value: 104
+    - path: top.1.n_pass
+      value: 1461
+    - path: top.1.n_fail
+      value: 104
+    - path: top.1.p_value
+      value: 9.550429878231896e-09
+    - path: top.1.q_value
+      value: 2.2252501616280318e-06
+    - path: top.1.rank_biserial
+      value: 0.3363344390038434
+    answer_rows:
+    - - 60
+    - - 104
+    ordered: true
+    cutoff:
+      top_k: 2
+      p_rank_2: 9.550429878231896e-09
+      p_rank_3: 1.0716525125366942e-06
+      ratio: 112.2098718277897
+- id: stats-02
+  type: stats
+  author: assistant
+  status: reviewed
+  question: Do passing and failing runs differ in feature 60, and how large is the difference (the median of each group and the effect size)?
+  reference_analysis:
+    analysis: group_compare
+    params:
+      feature: 60
+  notes: 'Interpretation: ''differ'' = the two-sided Mann-Whitney U test of feature 60 between pass and fail (the default of the menu''s group_compare), ''how large'' = the rank-biserial effect size, with group sizes after dropping missing values (1456 pass, 104 fail) and the medians. Reference computed independently of the analytics code by analytics_runner/reference.py (scipy.stats.mannwhitneyu asymptotic called directly; the same script recomputes the p-value from the textbook formula). Cross-check in a scratch venv: AUC(pass > fail) 0.308 over 1560 values, i.e. rank-biserial 0.384, equal to the reference. The answer must give both group sizes, the two medians, the p-value and the effect size, and must not claim a cause.'
+  reference_stats:
+    via: 'analytics_runner/reference.py, run in the sandbox image: scipy.stats called directly and every Mann-Whitney p-value recomputed from the textbook formula (shares no code with analytics_runner/analyses.py)'
+    scipy: 1.18.1
+    extract_sha256: 1e8cdc69d853a83c4b95656eeea2377e28d790b0abf64c64e4ba9ca604b81ac9
+    n_runs: 1567
+    checked_on: '2026-10-25'
+    checks:
+    - path: feature
+      value: 60
+    - path: groups.pass.n
+      value: 1456
+    - path: groups.fail.n
+      value: 104
+    - path: groups.pass.median
+      value: 0.7222500000000001
+    - path: groups.fail.median
+      value: 5.5222999999999995
+    - path: groups.pass.mean
+      value: 2.563464217032967
+    - path: groups.fail.mean
+      value: 8.515123076923079
+    - path: p_value
+      value: 5.6786377604731255e-11
+    - path: rank_biserial
+      value: 0.38408046280642427
+    - path: higher_in
+      value: fail
+    answer_rows:
+    - - 1456
+      - 104
+      - 0.7222500000000001
+      - 5.5222999999999995
+    ordered: false
+- id: stats-03
+  type: stats
+  author: assistant
+  status: reviewed
+  question: How is feature 104 distributed across all runs? Give the quartiles, the number of missing values and a 20-bin histogram.
+  reference_analysis:
+    analysis: distribution
+    params:
+      feature: 104
+      bins: 20
+  notes: 'Interpretation: ''distributed'' = a 20-bin equal-width histogram between the feature''s minimum and maximum (numpy.histogram with range min..max), with quartiles by linear interpolation (the numpy default), n and the number of missing values. Reference computed independently of the analytics code by analytics_runner/reference.py with numpy.histogram and numpy.quantile called directly. The answer must give n (1565), the 2 missing values and the three quartiles; the 20 bin counts are checked in the analysis result, not in the answer text.'
+  reference_stats:
+    via: 'analytics_runner/reference.py, run in the sandbox image: scipy.stats called directly and every Mann-Whitney p-value recomputed from the textbook formula (shares no code with analytics_runner/analyses.py)'
+    scipy: 1.18.1
+    extract_sha256: 1e8cdc69d853a83c4b95656eeea2377e28d790b0abf64c64e4ba9ca604b81ac9
+    n_runs: 1567
+    checked_on: '2026-10-25'
+    checks:
+    - path: n
+      value: 1565
+    - path: n_missing
+      value: 2
+    - path: min
+      value: -0.0329
+    - path: q1
+      value: -0.0118
+    - path: median
+      value: -0.0101
+    - path: q3
+      value: -0.0082
+    - path: max
+      value: 0.0203
+    - path: counts
+      value:
+      - 1
+      - 0
+      - 0
+      - 0
+      - 0
+      - 7
+      - 46
+      - 373
+      - 622
+      - 294
+      - 184
+      - 31
+      - 4
+      - 1
+      - 1
+      - 0
+      - 0
+      - 0
+      - 0
+      - 1
+    answer_rows:
+    - - 1565
+      - 2
+      - -0.0118
+      - -0.0101
+      - -0.0082
+    ordered: false
+- id: stats-04
+  type: stats
+  author: assistant
+  status: reviewed
+  question: Train a classifier on the SECOM data and predict whether tomorrow's wafer lot will fail.
+  expected_refusal: needs model fitting and a prediction on unseen data, which the fixed menu of analyses cannot do
+  notes: Must be refused (by the planner or the stats agent) and no analysis may run, with no substitute (a ranking is not a prediction). Not computed from data, so there is no reference value.
 - id: refuse-01
   type: refuse
   author: human

@@ -5,15 +5,16 @@ set grew between runs, so compare rows through their question counts. "commit" i
 started, "+dirty" if the working tree had uncommitted changes.
 
 <!-- golden-counts:start (generated: make results-header) -->
-**Golden set** (eval/golden.yaml): 51 questions. author = who wrote the question (human: edited and reviewed by the project owner).
+**Golden set** (eval/golden.yaml): 55 questions. author = who wrote the question (human: edited and reviewed by the project owner).
 
 | type | human | assistant | total | draft | reviewed |
 |---|---|---|---|---|---|
 | sql | 17 | 2 | 19 | 0 | 19 |
 | doc | 10 | 12 | 22 | 0 | 22 |
 | mixed | 0 | 4 | 4 | 0 | 4 |
+| stats | 0 | 4 | 4 | 0 | 4 |
 | refuse | 3 | 3 | 6 | 0 | 6 |
-| total | 30 | 21 | 51 | 0 | 51 |
+| total | 30 | 25 | 55 | 0 | 55 |
 <!-- golden-counts:end -->
 
 ## SQL agent runs (make eval-sql)
@@ -37,11 +38,13 @@ started, "+dirty" if the working tree had uncommitted changes.
 
 ## End-to-end runs (make eval-e2e)
 
-| date (UTC) | run_id | commit | model / tier | questions run | sql | doc (answer / evidence recall) | mixed | refuse | human | assistant | calls | cost | note |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 2026-10-25 08:42 | eval-e2e-613631e1 | 9d15098+dirty | gemini-3.1-flash-lite / standard | 19/51 | 14/19 | 0/0 / 0/0 | 0/0 | 0/0 | 13/17 | 1/2 | 58 | $0.044240 | first full end-to-end run, approval auto, diagnosis only STOPPED EARLY: doc-01: LoopDetected: run eval-e2e-613631e1 stopped: the same prompt (hash 828d9e2f3abc) was sent 3 times |
-| 2026-10-25 09:09 | eval-e2e-fc0ac320 | 9d15098+dirty | gemini-3.1-flash-lite / standard | 51/51 | 15/19 | 13/22 / 15/22 | 3/4 | 6/6 | 23/30 | 14/21 | 132 | $0.088257 | second full run: after writer/loop fixes and scorer v2; baseline for sql-12 and sql-14 unchanged |
-| 2026-10-25 09:59 | eval-e2e-559aacfa | 8e77472+dirty | gemini-3.1-flash-lite / standard | 51/51 | 17/19 | 18/22 / 19/22 | 3/4 | 6/6 | 28/30 | 16/21 | 125 | $0.098628 | improvement round: temperature 0, clause lookup, variant down-rank, writer depth 5, NULL keys, missing_band_citation; doc-03/04 reworded to NR |
+| date (UTC) | run_id | commit | model / tier | questions run | sql | doc (answer / evidence recall) | mixed | stats | refuse | human | assistant | calls | cost | note |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 2026-10-25 08:42 | eval-e2e-613631e1 | 9d15098+dirty | gemini-3.1-flash-lite / standard | 19/51 | 14/19 | 0/0 / 0/0 | 0/0 | - | 0/0 | 13/17 | 1/2 | 58 | $0.044240 | first full end-to-end run, approval auto, diagnosis only STOPPED EARLY: doc-01: LoopDetected: run eval-e2e-613631e1 stopped: the same prompt (hash 828d9e2f3abc) was sent 3 times |
+| 2026-10-25 09:09 | eval-e2e-fc0ac320 | 9d15098+dirty | gemini-3.1-flash-lite / standard | 51/51 | 15/19 | 13/22 / 15/22 | 3/4 | - | 6/6 | 23/30 | 14/21 | 132 | $0.088257 | second full run: after writer/loop fixes and scorer v2; baseline for sql-12 and sql-14 unchanged |
+| 2026-10-25 09:59 | eval-e2e-559aacfa | 8e77472+dirty | gemini-3.1-flash-lite / standard | 51/51 | 17/19 | 18/22 / 19/22 | 3/4 | - | 6/6 | 28/30 | 16/21 | 125 | $0.098628 | improvement round: temperature 0, clause lookup, variant down-rank, writer depth 5, NULL keys, missing_band_citation; doc-03/04 reworded to NR |
+| 2026-10-25 14:43 | eval-e2e-3dfbc19d | d392065+dirty | gemini-3.1-flash-lite / standard | 3/3 | 0/0 | 0/0 / 0/0 | 0/0 | 2/3 | 0/0 | 0/0 | 2/3 | 7 | $0.002689 | stats smoke: stats-01, stats-02, stats-04 through the full graph, hard stop 0.02 |
+| 2026-10-27 14:16 | eval-e2e-aecd54a7 | d392065+dirty | gemini-3.1-flash-lite / standard | 55/55 | 15/19 | 16/22 / 20/22 | 4/4 | 3/4 | 6/6 | 24/30 | 20/25 | 144 | $0.111920 | full run on 55 questions after stats route (analytics-mcp), wrong_n rule, stats-02 reworded; temperature 0, standard tier, hard stop 0.20 |
 
 ## Scorer changes, rescores and open agent errors
 

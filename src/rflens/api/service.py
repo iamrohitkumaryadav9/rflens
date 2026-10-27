@@ -12,14 +12,18 @@ import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import create_engine, text
 
+from rflens.agents.analytics_tools import AnalyticsMcpTools
 from rflens.agents.sql_tools import SqlMcpTools
+from rflens.analytics.sandbox import artifacts_dir
 from rflens.config import (
     GraphSettings,
     get_agent_settings,
+    get_artifact_settings,
     get_checkpointer_settings,
     get_graph_settings,
 )
@@ -38,7 +42,13 @@ from rflens.llm.gateway import Gateway, build_gateway
 from rflens.mcp.docs_server import CHUNK_ID_RE
 
 THREAD_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
-NODE_OF_PURPOSE = {"planner": "planner", "sql-agent": "sql_agent", "writer": "writer"}
+ARTIFACT_ID_RE = re.compile(r"^[0-9a-f]{64}$")  # an analysis_id: never a path
+NODE_OF_PURPOSE = {
+    "planner": "planner",
+    "sql-agent": "sql_agent",
+    "stats-agent": "stats_agent",
+    "writer": "writer",
+}
 
 
 class ThreadNotFound(LookupError):
@@ -61,6 +71,14 @@ class ChunkNotFound(LookupError):
     pass
 
 
+class BadArtifactId(ValueError):
+    pass
+
+
+class ArtifactNotFound(LookupError):
+    pass
+
+
 @dataclass
 class Parts:
     """What one request needs besides the checkpointer."""
@@ -69,6 +87,7 @@ class Parts:
     sql_tools: SqlMcpTools
     docs_tools: DocsMcpTools
     settings: GraphSettings
+    analytics_tools: AnalyticsMcpTools | None = None
 
 
 _DEFAULT_TOOLS: dict[str, Any] = {}
@@ -81,8 +100,13 @@ def default_parts() -> Parts:
     if not _DEFAULT_TOOLS:
         _DEFAULT_TOOLS["sql"] = SqlMcpTools(agent.sql_mcp_url)
         _DEFAULT_TOOLS["docs"] = DocsMcpTools(agent.docs_mcp_url)
+        _DEFAULT_TOOLS["analytics"] = AnalyticsMcpTools(agent.analytics_mcp_url)
     return Parts(
-        build_gateway(), _DEFAULT_TOOLS["sql"], _DEFAULT_TOOLS["docs"], get_graph_settings()
+        build_gateway(),
+        _DEFAULT_TOOLS["sql"],
+        _DEFAULT_TOOLS["docs"],
+        get_graph_settings(),
+        _DEFAULT_TOOLS["analytics"],
     )
 
 
@@ -97,7 +121,12 @@ class OrchestratorService:
         gateway_run = parts.gateway.run(run_name)
         with open_checkpointer() as saver:
             deps = GraphDeps(
-                gateway_run, parts.sql_tools, parts.docs_tools, settings, approval_mode="interrupt"
+                gateway_run,
+                parts.sql_tools,
+                parts.docs_tools,
+                settings,
+                approval_mode="interrupt",
+                analytics_tools=parts.analytics_tools,
             )
             graph = build_graph(deps, saver)
             if track:
@@ -204,6 +233,16 @@ class OrchestratorService:
                 "text",
             )
         }
+
+    @staticmethod
+    def artifact_path(artifact_id: str) -> Path:
+        """The PNG of an analysis artifact, by its id (64 hex characters)."""
+        if not ARTIFACT_ID_RE.fullmatch(artifact_id):
+            raise BadArtifactId(artifact_id)
+        path = artifacts_dir(get_artifact_settings()) / f"{artifact_id}.png"
+        if not path.is_file():
+            raise ArtifactNotFound(artifact_id)
+        return path
 
     # --- running ------------------------------------------------------------------------------
 

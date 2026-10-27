@@ -24,6 +24,7 @@ from typing import Any
 
 from sqlalchemy import text
 
+from rflens.agents.analytics_tools import AnalyticsMcpTools
 from rflens.agents.sql_tools import SqlMcpTools
 from rflens.config import get_agent_settings, get_graph_settings
 from rflens.db import get_ledger_engine
@@ -47,7 +48,12 @@ from rflens.llm.fake import FakeProvider
 from rflens.llm.gateway import Gateway, build_gateway
 
 PROMPT = "approve / edit / cancel [a/e/c]: "
-NODE_OF_PURPOSE = {"planner": "planner", "sql-agent": "sql_agent", "writer": "writer"}
+NODE_OF_PURPOSE = {
+    "planner": "planner",
+    "sql-agent": "sql_agent",
+    "stats-agent": "stats_agent",
+    "writer": "writer",
+}
 
 
 def make_gateway(*, quiet: bool = False) -> Gateway:
@@ -73,6 +79,7 @@ def make_deps(run, *, ask: bool) -> GraphDeps:
         DocsMcpTools(agent.docs_mcp_url),
         settings,
         approval_mode="interrupt",
+        analytics_tools=AnalyticsMcpTools(agent.analytics_mcp_url),
     )
 
 

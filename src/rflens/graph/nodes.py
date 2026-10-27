@@ -10,6 +10,7 @@ budget, loop detector, paid-call block, ledger failure) propagate out of the gra
 keeps its last checkpoint and can be resumed.
 """
 
+import json
 import re
 import time
 from contextlib import contextmanager
@@ -18,9 +19,14 @@ from typing import Any, Literal
 
 from langgraph.types import interrupt
 
+from rflens.agents.analytics_tools import AnalyticsMcpTools, AnalyticsMcpUnavailable
 from rflens.agents.sql_agent import MAX_CORRECTIONS, answer_question
 from rflens.agents.sql_prompt import build_system_prompt
 from rflens.agents.sql_tools import SqlMcpTools, SqlMcpUnavailable
+from rflens.agents.stats_agent import MAX_CORRECTIONS as STATS_MAX_CORRECTIONS
+from rflens.agents.stats_agent import MAX_OUTPUT_TOKENS as STATS_MAX_OUTPUT_TOKENS
+from rflens.agents.stats_agent import answer_stats
+from rflens.agents.stats_prompt import STATS_SYSTEM
 from rflens.config import GraphSettings, get_agent_settings
 from rflens.graph.band_lookup import BandLookupError, clean_bands, describe_row, lookup_bands
 from rflens.graph.docs_tools import DocsMcpError, DocsMcpTools, DocsMcpUnavailable
@@ -46,7 +52,7 @@ from rflens.llm.base import (
 from rflens.llm.gateway import LLMRun
 from rflens.retrieval.variants import extract_refs
 
-ROUTES = ("sql", "doc", "mixed", "refuse")
+ROUTES = ("sql", "doc", "mixed", "stats", "refuse")
 WRITER_EST_OVERHEAD_TOKENS = 700
 CAP_NOTE = "per-question call cap"
 # failures that come from the SQL itself: the SQL result is withheld when one is left after retries
@@ -61,6 +67,7 @@ class GraphDeps:
     docs_tools: DocsMcpTools
     settings: GraphSettings
     approval_mode: Literal["interrupt", "auto"] = "interrupt"
+    analytics_tools: AnalyticsMcpTools | None = None  # only the stats route needs it
 
     def __post_init__(self) -> None:
         # one graph run is one question: the orchestrated cap replaces the per-command default
@@ -102,6 +109,9 @@ def planned_worst_case_usd(deps: GraphDeps, route: str, question: str) -> float:
         return gw.pricing.worst_case_usd(prov.name, prov.model, prov.service_tier, est_in, max_out)
 
     total = 0.0
+    if route == "stats":
+        est = estimate_tokens([Message.system(STATS_SYSTEM), Message.user(question)])
+        total += (1 + STATS_MAX_CORRECTIONS) * one(est, STATS_MAX_OUTPUT_TOKENS)
     if route in ("sql", "mixed"):
         prompt = [
             Message.system(build_system_prompt(deps.sql_tools.schema_context())),
@@ -170,6 +180,7 @@ def make_planner(deps: GraphDeps):
         spec, source, conflict = merge_with_hint(rules, hint)
         doc_query = str(plan.get("doc_query") or "").strip()
         sql_question = str(plan.get("sql_question") or "").strip()
+        stats_question = str(plan.get("stats_question") or "").strip()
         reasons: list[str] = []
         if route != "refuse" and deps.settings.ask:
             reasons.append("ask: ASK is set")  # (a)
@@ -203,6 +214,7 @@ def make_planner(deps: GraphDeps):
                 "spec_hint": hint,
                 "doc_query": doc_query,
                 "sql_question": sql_question,
+                "stats_question": stats_question,
                 "bands": clean_bands(plan.get("bands")) if route == "mixed" else [],
                 "refuse_reason": str(plan.get("refuse_reason") or ""),
                 "rule_matches": list(rules.matched),
@@ -464,6 +476,60 @@ def make_sql_agent(deps: GraphDeps):
     return sql_agent
 
 
+# --- stats agent --------------------------------------------------------------------------------
+
+
+def make_stats_agent(deps: GraphDeps):
+    def stats_agent(state: GraphState) -> dict:
+        qid = state["question_id"]
+        deps.run.seed_question(qid)
+        if deps.analytics_tools is None:
+            return {
+                "halt": "analytics-mcp is not configured for this run",
+                "node_stats": {"stats_agent": {"calls": 0}},
+            }
+        # the planner's restatement keeps the question's feature numbers and counts; the original
+        # question is what analytics_call_log records
+        asked = (state.get("plan") or {}).get("stats_question") or state["question"]
+        try:
+            result = answer_stats(
+                asked if asked == state["question"] else f"{state['question']}\n({asked})",
+                run=deps.run,
+                tools=deps.analytics_tools,
+                question_id=qid,
+            )
+        except LoopDetected as e:
+            return {
+                **_loop_halt(state, e, "stats_agent"),
+                "node_stats": {"stats_agent": {"calls": 0}},
+            }
+        except AnalyticsMcpUnavailable as e:
+            return {"halt": str(e), "node_stats": {"stats_agent": {"calls": 0}}}
+        stat = {"calls": result.calls, "cost_usd": result.cost_usd}
+        stats = {
+            "status": result.status,
+            "analysis": result.analysis,
+            "params": result.params,
+            "call_id": result.call_id,
+            "analysis_id": result.analysis_id,
+            "result": result.result,
+            "artifacts": result.artifacts,
+            "dataset": result.dataset,
+            "n_runs_used": result.n_runs_used,
+            "n_runs_in_extract": result.n_runs_in_extract,
+            "missing_policy": result.missing_policy,
+            "warnings": result.warnings,
+            "notes": result.notes,
+            "corrections": result.corrections,
+        }
+        update: dict = {"stats": stats, "node_stats": {"stats_agent": stat}}
+        if result.status == "failed" and any(CAP_NOTE in n for n in result.notes):
+            update["halt"] = next(n for n in result.notes if CAP_NOTE in n)
+        return update
+
+    return stats_agent
+
+
 # --- writer -------------------------------------------------------------------------------------
 
 
@@ -515,6 +581,7 @@ def make_writer(deps: GraphDeps):
                     state.get("chunks") or [],
                     deps.settings.orch_writer_rows,
                     state.get("band_lookup"),
+                    state.get("stats"),
                 )
             ),
         ]
@@ -571,6 +638,7 @@ def verifier(state: GraphState) -> dict:
         sql=state.get("sql"),
         chunks=state.get("chunks") or [],
         sql_question=(state.get("plan") or {}).get("sql_question") or "",
+        stats=state.get("stats"),
     )
     if state.get("writer_failure"):  # the model gave no complete answer: not an "empty draft"
         failure = {"type": "writer_truncated", "sentence": None, "detail": state["writer_failure"]}
@@ -614,6 +682,12 @@ def _fallback_text(state: GraphState, drop_sql: bool) -> str:
             lines.append("Units of columns marked ASSUMED in the schema are assumed.")
     elif drop_sql:
         lines.append("The database result was withheld because the query could not be verified.")
+    stats = state.get("stats")
+    if stats and stats.get("status") == "answered":
+        lines.append(
+            f"The analysis {stats['analysis']} ran on {stats['n_runs_used']} run(s) [A1]; "
+            "its result is in the Sources section."
+        )
     for chunk in state.get("chunks") or []:
         lines.append(
             f"Relevant passage: TS {chunk['spec']} clause {chunk['clause']} [{chunk['ref']}]."
@@ -637,6 +711,7 @@ def redact(state: GraphState) -> dict:
             sql=sql,
             chunks=state.get("chunks") or [],
             sql_question=(state.get("plan") or {}).get("sql_question") or "",
+            stats=state.get("stats"),
         )
         if kept
         else None
@@ -663,6 +738,16 @@ def sources_section(answer: str, state: GraphState) -> str:
     cited = {(m.group(1), int(m.group(2))) for m in CITE_RE.finditer(answer)}
     lines: list[str] = []
     sql = state.get("sql")
+    stats = state.get("stats")
+    if ("A", 1) in cited and stats and stats.get("status") == "answered":
+        lines.append(
+            f"[A1] analytics-mcp call #{stats['call_id']}: {stats['analysis']}("
+            + json.dumps(stats["params"], separators=(",", ":"))
+            + f") on SECOM, {stats['n_runs_used']} run(s), extract "
+            + str((stats.get("dataset") or {}).get("extract_sha256", ""))[:12]
+        )
+        for art in stats.get("artifacts") or []:
+            lines.append(f"    plot artifact {art['id']} (PNG, {art['bytes']} bytes)")
     if ("S", 1) in cited and sql and sql.get("status") == "answered":
         lines.append(
             f"[S1] sql-mcp query #{sql['query_id']} ({sql['row_count']} row(s)): "
@@ -682,6 +767,7 @@ def sources_section(answer: str, state: GraphState) -> str:
 def finalize(state: GraphState) -> dict:
     status = state.get("status")
     sql = state.get("sql") or {}
+    stats = state.get("stats") or {}
     if status in ("cancelled", "partial"):
         answer = state["answer"]
     elif state.get("halt"):
@@ -692,6 +778,12 @@ def finalize(state: GraphState) -> dict:
     elif sql.get("status") == "refused":
         status = "refused"
         answer = (sql.get("notes") or ["The question was refused."])[0]
+    elif stats.get("status") == "refused":
+        status = "refused"
+        answer = (stats.get("notes") or ["The question was refused."])[0]
+    elif stats and stats.get("status") != "answered":
+        status = "failed"
+        answer = "The stats agent could not answer: " + ((stats.get("notes") or ["no reason"])[-1])
     elif sql and sql.get("status") != "answered":
         status = "failed"
         answer = (

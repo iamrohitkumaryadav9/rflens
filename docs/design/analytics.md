@@ -1,6 +1,7 @@
 # analytics-mcp and the stats agent (week 5 design)
 
-Status: DESIGN, awaiting approval. Nothing is built; no paid calls were made. 2026-10-25.
+Status: APPROVED and BUILT (2026-10-25), analytics-mcp v1 on SECOM only. Section 8 lists where the
+build differs from this design. The graph side is documented in [orchestrator.md](orchestrator.md).
 
 ## 1. Data
 
@@ -9,7 +10,8 @@ Status: DESIGN, awaiting approval. Nothing is built; no paid calls were made. 20
 41,951 of them NULL (missing). The most-missing features are 91.2% empty (e.g. 158, 159, 293, 294).
 Feature units are not published (unitless; the column comment must say UNKNOWN).
 
-**RadioML (DeepSig): recommend skipping.**
+**RadioML (DeepSig): SKIPPED (decision 2026-10-25).** Reasons: the download is behind a form, the
+file is about 21 GB, and the licence is CC BY-NC-SA 4.0. Details:
 
 - Official page: https://www.deepsig.ai/datasets/. Licence, quoted: "All datasets provided by
   Deepsig Inc. are licensed under the Creative Commons Attribution – NonCommercial – ShareAlike
@@ -164,34 +166,33 @@ planner --(stats)--> approval --> stats_agent --> writer --> verifier --> finali
 `docs/design/orchestrator.md` changes when this is built: hard rule 4, the state table (`stats`,
 `route` value), the graph diagram, verifier rules, the stats section. It is not changed now.
 
-## 6. Golden set: four stats questions (proposal, to be reviewed by you)
+## 6. Golden set: four stats questions (author assistant, reviewed by the owner 2026-10-27)
 
-New type `stats`; each carries `reference_analysis` (analysis + params), `reference_result`
-(computed through analytics-mcp by `make golden-refresh`, deterministic: fixed scipy / numpy
-versions, no randomness except the fixed-seed scatter sample) and the numbers the answer must
-contain. Scoring compares the structured result with the reference (numbers to 1e-6 relative,
-feature order for rankings), then the existing verifier. Before the first refresh, I computed the
-first one independently (scipy 1.18.1 in a scratch venv, not in the container) as a cross-check.
+New type `stats` in `eval/golden.yaml` (55 questions now). Each answerable one carries
+`reference_analysis` (the menu call), `reference_stats` (`checks`: path into the analysis result
+and the reference value; `answer_rows`: values the answer text must contain; `via`; scipy version;
+SHA-256 of the data extract) and `notes` saying how the reference was computed. The references
+come from `analytics_runner/reference.py` (`make golden-stats-refresh`), which does not import the
+analysis code: it calls scipy.stats directly and recomputes every Mann-Whitney p-value from the
+textbook formula, and stops if the two differ. The first ranking was also checked once in a scratch
+venv on a separate dump of the database.
 
-1. **stats-01 (feature ranking):** "Which five sensor features in the SECOM data are most strongly
-   associated with failing runs?" Reference: `feature_ranking`, top_k 5, Mann-Whitney. Independent
-   check: the leading features by p are 60, 104, 248, 520, 511 (p rounded to 6 places in the check:
-   0.0, 0.0, 1e-06, 1e-06, 3e-06; n of 852 to 1,565 depending on missing values). Exact p, the
-   order of the near-ties 248 / 520 and the q-values come from the refresh.
-2. **stats-02 (pass/fail comparison):** "Do passing and failing runs differ in feature 60, and how
-   large is the difference?" Reference: `group_compare`, feature 60. Independent check: the
-   Mann-Whitney AUC (P[pass > fail]) is 0.308 with 1,560 non-missing values; the answer must give
-   both group sizes, the medians, the p and the effect size, and must not claim causation.
-3. **stats-03 (distribution):** "What does the distribution of feature 104 look like across all
-   runs? Give the quartiles and a 20-bin histogram." Reference: `distribution` + `describe`,
-   feature 104; answer must mention the number of missing values and a plot artifact is
-   produced.
+1. **stats-01 (feature ranking):** "Which two sensor features in the SECOM data are most strongly
+   associated with failing runs?" Features 60 then 104 (p 5.7e-11 and 9.6e-9). N is 2 because
+   ranks 2 and 3 differ clearly (p 9.55e-9 against 1.07e-6, a factor of 112) while ranks 3 and 4
+   (features 248 and 520, p 1.07e-6 and 1.19e-6) are near-tied; the refresh refuses a cutoff
+   below a factor of 10 and an order inside the top N below a factor of 2.
+2. **stats-02 (pass/fail comparison):** "...how large is the difference (the median of each group and the effect size)?" Feature 60: 1,456 passing and 104 failing values, medians
+   0.722 and 5.52, p 5.7e-11, rank-biserial 0.384 (higher in failing runs).
+3. **stats-03 (distribution):** feature 104: n 1,565, 2 missing, quartiles -0.0118, -0.0101,
+   -0.0082, and the 20 bin counts in the result.
 4. **stats-04 (refuse):** "Train a classifier on the SECOM data and predict whether tomorrow's
-   wafer lot will fail." Expected refusal: needs model fitting and prediction, which is not in the
-   fixed menu (arbitrary code); notes: the agent must not offer a ranking as a substitute prediction.
+   wafer lot will fail." Refused by the planner or the stats agent; no analysis may run.
 
-The golden file's counts, `eval/RESULTS.md` header and the test that checks them change from 51 to
-55 questions; the e2e scorer gets a `stats` branch.
+Scoring (`eval/e2e_score.py`): the final state has an answered analysis of the reference menu
+entry, every check passes (1e-6 relative; strings and lists exactly), the answer cites `[A1]` and
+contains `answer_rows` (a ranked list in order); stats-04 is scored like a refusal and also needs
+that no analysis ran.
 
 ## 7. Cost estimate
 
@@ -205,3 +206,19 @@ The golden file's counts, `eval/RESULTS.md` header and the test that checks them
 - **Build effort (no cost):** migration + roles; runner + image; menu models; analytics-mcp +
   log + servers-up; graph node, planner route, verifier checks; API artifact route + UI;
   golden/scorer; docs.
+
+## 8. Build differences
+
+- Image `rflens-analytics:v1` (`make analytics-image`): `python:3.12-slim`, numpy 2.5.4, scipy 1.18.1,
+  matplotlib 3.11.2, their pinned dependencies and pytest (the in-image tests); **pandas is not in
+  it** (nothing needs it): 614 MB against 716 MB for the probe image with pandas. The base image
+  is pinned by tag, not by digest.
+- The stats agent has no second attempt after a verifier failure (prose failures go to the
+  writer); it has one correction after an analytics-mcp rejection. `params_json` is a string.
+- `distribution` also returns n, missing count and quartiles (so one call answers a question
+  about quartiles and missing values).
+- Container tests: `make test-analytics` and the GitHub workflow run them; `make ci-local` prints
+  them as NOT RUN (no Docker daemon inside its container), see `rflens.ci_local`.
+- Golden stats questions are scored on the structured result and the answer text
+  (`reference_stats`), with references from `analytics_runner/reference.py`, which shares no code
+  with the analyses.

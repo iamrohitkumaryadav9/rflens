@@ -25,7 +25,7 @@ def test_the_file_validates_and_counts_per_type_and_author() -> None:
     assert problems(GOLDEN) == []
     counts = {
         (t, a): len(of(t, a))
-        for t in ("sql", "doc", "mixed", "refuse")
+        for t in ("sql", "doc", "mixed", "stats", "refuse")
         for a in ("human", "assistant")
     }
     assert counts == {
@@ -35,22 +35,25 @@ def test_the_file_validates_and_counts_per_type_and_author() -> None:
         ("doc", "assistant"): 12,
         ("mixed", "human"): 0,
         ("mixed", "assistant"): 4,
+        ("stats", "human"): 0,
+        ("stats", "assistant"): 4,
         ("refuse", "human"): 3,
         ("refuse", "assistant"): 3,
     }
-    assert len(GOLDEN) == 51 and len({q.id for q in GOLDEN}) == 51
+    assert len(GOLDEN) == 55 and len({q.id for q in GOLDEN}) == 55
 
 
 def test_authors_and_statuses_are_consistent() -> None:
     human = [q for q in GOLDEN if q.author == "human"]
     assistant = [q for q in GOLDEN if q.author == "assistant"]
     assert {q.status for q in human} == {"reviewed"}
-    assert {q.status for q in assistant} == {"reviewed"}  # the owner reviewed all 22 drafts
+    assert {q.status for q in assistant} == {"reviewed"}  # the owner reviewed all 25 drafts
     # the questions that existed before the assistant's are human; mixed-03 was dropped in review
     assert {q.id for q in assistant} == (
         {f"doc-{i}" for i in range(11, 23)}
         | {f"mixed-{i:02d}" for i in (1, 2, 4, 5)}
         | {"sql-18", "sql-19", "refuse-04", "refuse-05", "refuse-06"}
+        | {f"stats-{i:02d}" for i in range(1, 5)}
     )
 
 

@@ -68,6 +68,13 @@ class ApiClient:
     def chunk(self, chunk_id: str) -> dict[str, Any]:
         return self._json(self.http.get(f"/chunks/{chunk_id}"))
 
+    def artifact(self, artifact_id: str) -> bytes:
+        """The PNG of an analysis artifact."""
+        response = self.http.get(f"/artifacts/{artifact_id}")
+        if response.status_code >= 400:
+            raise ApiError(response.status_code, response.text)
+        return response.content
+
 
 def badge_style(badge: str) -> tuple[str, str]:
     """(colour, label) for the verification badge."""
@@ -75,6 +82,11 @@ def badge_style(badge: str) -> tuple[str, str]:
 
 
 def source_title(item: dict[str, Any]) -> str:
+    if item["kind"] == "stats":
+        return (
+            f"[{item['tag']}] Analysis {item.get('analysis')}: call #{item.get('call_id')}, "
+            f"{item.get('n_runs_used')} run(s)"
+        )
     if item["kind"] == "sql":
         rows = item.get("row_count")
         return f"[{item['tag']}] SQL result: query #{item.get('query_id')}, {rows} row(s)"

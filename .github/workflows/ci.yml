@@ -29,6 +29,8 @@ jobs:
       SQL_LOGGER_PASSWORD: ci-only-sql-logger-password
       CHECKPOINTER_PASSWORD: ci-only-checkpointer-password
       LLM_LEDGER_PASSWORD: ci-only-llm-ledger-password
+      ANALYTICS_READER_PASSWORD: ci-only-analytics-reader-password
+      ANALYTICS_LOGGER_PASSWORD: ci-only-analytics-logger-password
     steps:
       # Both actions run on Node 24 (the v4 / v6 majors ran on Node 20, which GitHub deprecates).
       # checkout: latest release v7.0.1 (2026-07-20), floating major tag v7.
@@ -41,3 +43,8 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run python -m rflens.testdb  # create rflens_test, alembic upgrade head
       - run: uv run pytest
+      # The analytics sandbox needs a Docker daemon: the runner has one, `make ci-local` does not
+      # (it prints these steps as NOT RUN). Same commands as `make test-analytics`.
+      - run: docker build -f analytics_runner/Dockerfile -t rflens-analytics:v1 .
+      - run: docker run --rm --network none --memory 512m --cpus 1 --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges -e PYTHONPATH=/app rflens-analytics:v1 python -m pytest -q -p no:cacheprovider /app/tests
+      - run: uv run pytest tests_docker -q -p no:cacheprovider

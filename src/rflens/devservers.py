@@ -1,6 +1,6 @@
 """Start and stop the local dev servers by recorded PID, never by port, name or command line.
 
-    make servers-up [SERVERS="sql-mcp docs-mcp api ui"]
+    make servers-up [SERVERS="sql-mcp docs-mcp analytics-mcp api ui"]
     make servers-status
     make servers-down [SERVERS=...]
 
@@ -44,6 +44,7 @@ SERVERS = {
     for s in (
         Server("sql-mcp", 8102, "SQL_MCP_PORT", ("-m", "rflens.mcp.sql_server")),
         Server("docs-mcp", 8101, "DOCS_MCP_PORT", ("-m", "rflens.mcp.docs_server")),
+        Server("analytics-mcp", 8103, "ANALYTICS_MCP_PORT", ("-m", "rflens.mcp.analytics_server")),
         Server("api", 8000, "API_PORT", ("-m", "rflens.api.server")),
         Server(
             "ui",
@@ -53,7 +54,7 @@ SERVERS = {
         ),
     )
 }
-ORDER = ("sql-mcp", "docs-mcp", "api", "ui")
+ORDER = ("sql-mcp", "docs-mcp", "analytics-mcp", "api", "ui")
 
 
 def pid_file(name: str, run_dir: Path = RUN_DIR) -> Path:

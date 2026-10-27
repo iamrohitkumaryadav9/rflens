@@ -62,6 +62,7 @@ E2E_COLUMNS = [
     "sql",
     "doc (answer / evidence recall)",
     "mixed",
+    "stats",
     "refuse",
     "human",
     "assistant",
@@ -100,7 +101,7 @@ def golden_counts_block(questions: list | None = None) -> str:
         "| type | human | assistant | total | draft | reviewed |",
         "|---|---|---|---|---|---|",
     ]
-    for kind in ("sql", "doc", "mixed", "refuse", None):
+    for kind in ("sql", "doc", "mixed", "stats", "refuse", None):
         group = [q for q in questions if kind is None or q.type == kind]
         cells = [
             sum(q.author == "human" for q in group),
@@ -158,7 +159,27 @@ def _load(path: Path) -> str:
         return _migrate_old_format(text)
     if E2E_TITLE not in text:  # files written before the end-to-end table existed
         text = text.rstrip("\n") + f"\n\n{E2E_TITLE}\n\n" + _table_header(E2E_COLUMNS)
-    return text
+    return _add_stats_column(text)
+
+
+def _add_stats_column(text: str) -> str:
+    """The end-to-end table gained a `stats` column (before `refuse`); earlier rows get `-`."""
+    lines = text.splitlines(keepends=True)
+    at = next(i for i, ln in enumerate(lines) if ln.strip() == E2E_TITLE)
+    header = next(i for i in range(at, len(lines)) if lines[i].startswith("| date (UTC)"))
+    cells = [c.strip() for c in lines[header].strip().strip("|").split("|")]
+    if "stats" in cells:
+        return text
+    where = cells.index("refuse")
+    lines[header] = _row(cells[:where] + ["stats"] + cells[where:])
+    i = header + 1
+    lines[i] = "|" + "---|" * (len(cells) + 1) + "\n"
+    i += 1
+    while i < len(lines) and lines[i].startswith("|"):
+        row = [c.strip() for c in lines[i].strip().strip("|").split("|")]
+        lines[i] = _row(row[:where] + ["-"] + row[where:])
+        i += 1
+    return "".join(lines)
 
 
 def _insert_row(text: str, title: str, row: str) -> str:
@@ -298,8 +319,8 @@ def append_e2e_row(
     path: Path = RESULTS_PATH,
     questions: list | None = None,
 ) -> str:
-    """Append one end-to-end run. `cells` holds the result cells keyed sql, doc, mixed, refuse,
-    human, assistant (each already formatted, for example '12/19')."""
+    """Append one end-to-end run. `cells` holds the result cells keyed sql, doc, mixed, stats,
+    refuse, human, assistant (each already formatted, for example '12/19')."""
     when = when or datetime.now(UTC)
     row = _row(
         [
@@ -311,6 +332,7 @@ def append_e2e_row(
             cells["sql"],
             cells["doc"],
             cells["mixed"],
+            cells["stats"],
             cells["refuse"],
             cells["human"],
             cells["assistant"],

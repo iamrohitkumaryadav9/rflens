@@ -18,13 +18,18 @@ Report extraction (FCC test reports, vendor datasheets) is not pursued: FCC bloc
 access, many reports are plot-only, some PDFs disallow copying, and vendor datasheets need a login
 (`docs/design/report-extraction.md`; kept as a record: `docs/design/datasheets.md`). The
 document-to-SQL piece is the 3GPP operating-band extraction (`spec_operating_bands`, every row
-cites its source chunk). Next: analytics-mcp and a stats agent (design in progress).
+cites its source chunk). Built: analytics-mcp (port 8103) and a stats route: a fixed menu of nine
+parameterized analyses on SECOM (rankings of features against pass/fail, comparisons,
+distributions, correlations, outliers, plots), never LLM-written code, run in a Docker container
+with no network (`docs/design/analytics.md`). Needs Docker: `make analytics-image`, then
+`make analytics-mcp` or `make servers-up`; `make test-analytics` runs the container tests (they are
+not part of `make ci-local`, which says so).
 
 Future work: report or datasheet value extraction, if a legitimate machine-readable source appears.
 
 ## Dev servers
 
-`make servers-up` starts sql-mcp (8102), docs-mcp (8101), the API (8000) and the UI (8502), each as
+`make servers-up` starts sql-mcp (8102), docs-mcp (8101), analytics-mcp (8103), the API (8000) and the UI (8502), each as
 a detached process whose PID is written to `run/<name>.pid` (gitignored) with its output in
 `run/<name>.log`. `make servers-status` shows them, and `make servers-down` stops exactly the PIDs
 recorded there (and the children of those PIDs). Nothing is ever stopped by port, name or command
