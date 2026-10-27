@@ -283,6 +283,12 @@ data/                     # gitignored; raw downloads (data/raw/secom, data/raw/
     correction after a rejection) and calls analytics-mcp; the writer cites `[A1]`; the verifier
     treats the result as a number source and adds `unsupported_stat_claim`, `causal_claim`,
     `wrong_n` (an n stated for a test must be one of its group sizes or their total) and `missing_n` (docs/design/orchestrator.md, "Stats route").
+  - **Routing boundary and writer prompt (after eval-e2e-aecd54a7):** `graph/route_rules.py` settles
+    sql versus stats for SECOM questions when decisive (aggregates -> sql; tests, effect sizes,
+    associations, correlations, distributions, plots -> stats) and the plan records `route_rule`; the
+    planner prompt has six examples (`PLANNER_EXAMPLES`). The statistics rules of the writer are
+    appended only when there is an analysis (`writer_system`); combined brackets such as `[D1, D2]`
+    are not citations, and the prompt says so. Details: docs/design/orchestrator.md.
   - **Container tests** (`make test-analytics`: the analyses inside the image, then
     `tests_docker/`: isolation flags against a real container, the whole stack) need a Docker
     daemon. The GitHub workflow runs them; `make ci-local` cannot (no Docker inside its

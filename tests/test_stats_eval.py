@@ -172,7 +172,12 @@ def test_the_other_references_use_the_independent_values() -> None:
     assert cmp_["groups.pass.n"] == 1456 and cmp_["groups.fail.n"] == 104
     assert cmp_["higher_in"] == "fail" and cmp_["rank_biserial"] == 0.384
     dist = stats_reference("stats-03", {}, REFERENCE)
-    assert dist["answer_rows"] == [[1565, 2, -0.0118, -0.0101, -0.0082]]
+    # n (1565) is a check on the result, not a required value of the text: the question does not ask
+    assert dist["answer_rows"] == [[2, -0.0118, -0.0101, -0.0082]]
+    assert {"path": "n", "value": 1565} in dist["checks"]
+    stats03 = GOLDEN["stats-03"]
+    assert stats03.reference_stats["answer_rows"] == [[2, -0.0118, -0.0101, -0.0082]]
+    assert "does not ask for the sample size" in stats03.notes
     assert {"path": "counts", "value": [1] * 20} in dist["checks"]
 
 

@@ -798,7 +798,7 @@ questions:
     scipy: 1.18.1
     extract_sha256: 1e8cdc69d853a83c4b95656eeea2377e28d790b0abf64c64e4ba9ca604b81ac9
     n_runs: 1567
-    checked_on: '2026-10-25'
+    checked_on: '2026-10-27'
     checks:
     - path: top.0.feature
       value: 60
@@ -848,7 +848,7 @@ questions:
     scipy: 1.18.1
     extract_sha256: 1e8cdc69d853a83c4b95656eeea2377e28d790b0abf64c64e4ba9ca604b81ac9
     n_runs: 1567
-    checked_on: '2026-10-25'
+    checked_on: '2026-10-27'
     checks:
     - path: feature
       value: 60
@@ -886,13 +886,13 @@ questions:
     params:
       feature: 104
       bins: 20
-  notes: 'Interpretation: ''distributed'' = a 20-bin equal-width histogram between the feature''s minimum and maximum (numpy.histogram with range min..max), with quartiles by linear interpolation (the numpy default), n and the number of missing values. Reference computed independently of the analytics code by analytics_runner/reference.py with numpy.histogram and numpy.quantile called directly. The answer must give n (1565), the 2 missing values and the three quartiles; the 20 bin counts are checked in the analysis result, not in the answer text.'
+  notes: 'Interpretation: ''distributed'' = a 20-bin equal-width histogram between the feature''s minimum and maximum (numpy.histogram with range min..max), with quartiles by linear interpolation (the numpy default), n and the number of missing values. Reference computed independently of the analytics code by analytics_runner/reference.py with numpy.histogram and numpy.quantile called directly. The answer must give the 2 missing values and the three quartiles. The sample size (n 1565) and the 20 bin counts are checked in the analysis result, not in the answer text: the question does not ask for the sample size, so it is not required there (changed 2026-10-27 after the full run eval-e2e-aecd54a7, where a correct answer without n was scored a miss).'
   reference_stats:
     via: 'analytics_runner/reference.py, run in the sandbox image: scipy.stats called directly and every Mann-Whitney p-value recomputed from the textbook formula (shares no code with analytics_runner/analyses.py)'
     scipy: 1.18.1
     extract_sha256: 1e8cdc69d853a83c4b95656eeea2377e28d790b0abf64c64e4ba9ca604b81ac9
     n_runs: 1567
-    checked_on: '2026-10-25'
+    checked_on: '2026-10-27'
     checks:
     - path: n
       value: 1565
@@ -931,8 +931,7 @@ questions:
       - 0
       - 1
     answer_rows:
-    - - 1565
-      - 2
+    - - 2
       - -0.0118
       - -0.0101
       - -0.0082

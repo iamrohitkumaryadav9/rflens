@@ -34,10 +34,11 @@ from rflens.graph.prompts import (
     PLANNER_SCHEMA,
     PLANNER_SYSTEM,
     WRITER_SCHEMA,
-    WRITER_SYSTEM,
     mixed_sql_context,
+    writer_system,
     writer_user_message,
 )
+from rflens.graph.route_rules import boundary_route
 from rflens.graph.spec_rules import SPECS, infer_spec, merge_with_hint
 from rflens.graph.state import GraphState
 from rflens.graph.verifier import CITE_RE, split_sentences, units_in, verify
@@ -175,6 +176,12 @@ def make_planner(deps: GraphDeps):
                 "halt": f"the planner returned an unusable route {route!r}",
                 "node_stats": {"planner": stat},
             }
+        # the sql / stats boundary is settled by rules when they are decisive (graph/route_rules.py)
+        decided = boundary_route(question)
+        route_rule = None
+        if route in ("sql", "stats") and decided and decided != route:
+            route_rule = f"planner said {route}, the rules say {decided}"
+            route = decided
         hint = plan.get("spec") if plan.get("spec") in SPECS else None
         rules = infer_spec(question)
         spec, source, conflict = merge_with_hint(rules, hint)
@@ -211,6 +218,7 @@ def make_planner(deps: GraphDeps):
             "route": route,
             "plan": {
                 "route": route,
+                "route_rule": route_rule,
                 "spec_hint": hint,
                 "doc_query": doc_query,
                 "sql_question": sql_question,
@@ -573,7 +581,7 @@ def make_writer(deps: GraphDeps):
         deps.run.seed_question(qid)
         attempts = state.get("writer_attempts", 0)
         messages = [
-            Message.system(WRITER_SYSTEM),
+            Message.system(writer_system(state.get("stats"))),
             Message.user(
                 writer_user_message(
                     state["question"],

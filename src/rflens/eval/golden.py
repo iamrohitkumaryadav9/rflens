@@ -307,7 +307,8 @@ def stats_reference(qid: str, params: dict, ref: dict) -> dict:
         keys = ("n", "n_missing", "min", "q1", "median", "q3", "max", "counts")
         return {
             "checks": _checks("", {k: d[k] for k in keys}),
-            "answer_rows": [[d["n"], d["n_missing"], d["q1"], d["median"], d["q3"]]],
+            # n is checked in the result, not required in the text: the question does not ask for it
+            "answer_rows": [[d["n_missing"], d["q1"], d["median"], d["q3"]]],
             "ordered": False,
         }
     raise SystemExit(f"{qid}: no reference builder")

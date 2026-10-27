@@ -487,6 +487,33 @@ Design and sandbox: [analytics.md](analytics.md). In the graph:
   relative (a fixed 1e-9 made every tiny number match another), and a SQL row count of zero is
   only a known number when a SQL result exists (without one, `0` matched every tiny value).
 
+### Fixes after the first full run with the stats route (eval-e2e-aecd54a7, 41/51 like-for-like)
+
+- **Writer prompt.** doc-03, doc-08 and doc-13 ended `partial` on `missing_citation`. Every failing
+  sentence ended in a combined bracket (`[D1, D2]`, `[D3, D5]`), which the verifier does not read
+  as a citation (it never did). The verifier was ruled out: the verifier of the previous run and
+  today's give the same verdict on every draft of both runs. doc-13 had the same question, the
+  same `doc_query` and the same five chunks in both runs; only the writer system prompt differed,
+  and its draft changed from `[D1], [D2]` to `[D1, D2]`. So the prompt change (the statistics
+  rules written into the citation rules, and `[A1]` in the tag list) caused doc-13; doc-03 and
+  doc-08 also had a slightly different `doc_query` (the planner prompt changed too), so their
+  evidence differed. Fix: the statistics rules are no longer part of `WRITER_SYSTEM`; they are
+  appended (`STATS_WRITER_RULES`, `writer_system(stats)`) only when the evidence holds an analysis,
+  so the prompt of every other route is the previous one plus one sentence that spells out the
+  failure: one tag per bracket, never `[D1, D2]`. The wrong_n guidance stays in the statistics
+  rules. The verifier was not changed.
+- **Routing boundary.** sql-03 and sql-04 (missing-value count, average) went to `stats`. The
+  planner prompt now says that simple aggregates over any table (counts, sums, averages, minimum /
+  maximum, top-N by a count or a value, missing-value counts) are `sql`, and that statistical
+  tests, effect sizes, association rankings, correlations, distributions with bins or quartiles,
+  histograms, outliers and plots are `stats`, with six examples (none a golden question;
+  `PLANNER_EXAMPLES`). `graph/route_rules.py` settles the boundary deterministically when the
+  rules are decisive, like the spec rules: only for a SECOM question, only between `sql` and
+  `stats`, a statistics word beats an aggregate word, and the plan records `route_rule` when it
+  overrode the model.
+- **stats-03** no longer requires n in the answer text (the question does not ask for it); n is
+  still checked in the result.
+
 ## Build differences (flagged)
 
 - Stats route (week 5): no second stats-agent attempt after a verifier failure (the first design
